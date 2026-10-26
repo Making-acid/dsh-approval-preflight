@@ -1,0 +1,12 @@
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.log
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Local verification artifacts
+.build/
+*.tmp

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Approval Preflight",
+    "description": "Plans the task and its permission needs up front, then grants whole permission classes once in a side panel so later approvals resolve instantly. Uncovered approvals time out, let the model switch to an unblocked subtask, and wake it when the grant finally arrives."
+  }
+}
