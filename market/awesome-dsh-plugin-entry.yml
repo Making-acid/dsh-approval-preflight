@@ -2,9 +2,8 @@
 # Target path in that repository:
 #   data/plugins/Making-acid__dsh-approval-preflight.yml
 #
-# TODO before submitting: replace the repository URL with the real one once the
-# plugin has its own GitHub repository, and confirm the category against the
-# list's catalog.
+# Ready to submit once the repository is 24 hours old (list CI requirement).
+# `category: workflow` is in the list's published category set.
 url: https://github.com/Making-acid/dsh-approval-preflight
 name: Making-acid/dsh-approval-preflight
 category: workflow
