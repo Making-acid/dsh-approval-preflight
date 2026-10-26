@@ -203,7 +203,32 @@ ok(
   ['fs-write', 'exec', 'network'].every((id) => legacyView.classes.find((row) => row.id === id)?.granted === true)
 )
 
-// 6. an empty task list retires the table
+// 6. a grant notice that was already consumed into a turn (recorded as
+//    `user/message`, not as an inbox splice) must still rehydrate
+const consumedAgent = {
+  id: 'session-consumed',
+  session: {
+    snapshotEvents: () => [
+      {
+        type: 'user/message',
+        time: Date.now(),
+        data: {
+          role: 'user',
+          content: [{ type: 'text', text: '[[preflight:grant:danger]] 用户已在预检面板授权：危险全权。' }]
+        }
+      }
+    ]
+  },
+  inject() {},
+  followup() {}
+}
+const consumedState = createState({ ...fakeCtx, agents: { get: (id) => (id === consumedAgent.id ? consumedAgent : undefined) } }, config)
+ok(
+  'grant consumed into a turn still rehydrates',
+  consumedState.panelView('session-consumed').classes.find((row) => row.id === 'danger')?.granted === true
+)
+
+// 7. an empty task list retires the table
 const clearAgent = { id: 'session-clear', session: { snapshotEvents: () => [] }, inject() {}, followup() {} }
 const clearState = createState({ ...fakeCtx, agents: { get: (id) => (id === clearAgent.id ? clearAgent : undefined) } }, config)
 ok('plan registers', clearState.setPlan(clearAgent, { goal: 'x', tasks: [{ id: 'T1', title: 'a' }] }).ok === true)
