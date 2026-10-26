@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Manifest and market shape
+        run: |
+          node -e "
+            const fs = require('node:fs');
+            const pkg = require('./package.json');
+            if (!pkg.dsh?.bundle?.patch) throw new Error('package.json must declare dsh.bundle.patch');
+            if (!fs.existsSync(pkg.dsh.bundle.patch)) throw new Error('bundle patch file is missing');
+            const shots = JSON.parse(fs.readFileSync('screenshots.json', 'utf8'));
+            for (const shot of shots.screenshots ?? []) if (!fs.existsSync(shot)) throw new Error('screenshot missing: ' + shot);
+            console.log('manifest ok');
+          "
+
+      - name: Logic tests (classification, plan, approval interpreter)
+        run: node scripts/selftest.mjs
+
+      - name: Host contract tests (real index.js against a Cordis stand-in)
+        run: node scripts/contract-test.mjs
+
+      - name: Client render tests (real client.js in a DOM stand-in)
+        run: node scripts/client-test.mjs
