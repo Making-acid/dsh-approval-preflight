@@ -1,112 +1,108 @@
 # 审批预检 · dsh-approval-preflight
 
-> 把「逐次审批」换成「开工前一次批完」，让模型不再因为没人点授权而干等。
+> 先交计算图，再逐节点批准。批准的是「这件事」，不是某条命令；一次批准只对一次成功执行生效。
 
-DeepSeek Harness 的插件。它做三件事：
+DeepSeek Harness 的插件。它解决的是 vibe coding 里真实的时间黑洞：审批请求没人及时点，工具调用同步等待，整轮就停在那里。
 
-1. **计划表**：模型接到需求后先调用 `preflight_plan`，提交「子任务 × 所需权限类别 + 依赖关系」的表；
-2. **批量预授权**：右侧「任务与权限预检」面板把表渲染出来，用户点一下（或「全部授权」）即可授权整类权限；
-3. **即时放行 + 超时让路**：之后同类审批由插件直接答复 `allowed-once`，用户无感；未覆盖的审批等 `approvalTimeoutSeconds` 秒后自动让路，模型收到「先去干别的」的提示，迟到的点击仍会转成常驻授权并把模型唤醒。
+## 它做什么
 
-**权限只能由用户授予。** 模型没有任何工具能给自己加权限：面板是唯一的授权入口，且它走的是带登录凭据的宿主通道。
+1. **模型先交计算图**：把要做的事拆成节点，写清每件事的本质（下载什么到哪里、写什么、删什么、执行什么），并标出会碰外部世界的节点；
+2. **用户逐节点批准**：右侧面板按依赖顺序列出节点，你点「批准」就是给了这件事**一次**执行许可；
+3. **执行时只放行该节点申报的影响范围**：节点执行期间，同类工具调用自动放行；超出申报范围的一律退回原生审批卡；
+4. **事后可审计**：每个节点都记录实际跑过什么（哪个工具、什么参数、成功与否），你随时能对照「批准的」和「实际做的」。
 
-## 效果
+**权限只能由用户授予。** 模型没有任何工具能批准节点；面板走的是带登录凭据的宿主通道。
 
-![任务与权限预检面板](assets/screenshot-1.png)
+## 为什么不是「按权限类别一次性授权」
 
-| 没有插件 | 有插件 |
-| --- | --- |
-| 每个需要审批的调用各弹一次卡，用户不在电脑前就整轮卡死 | 开工时在面板里点 1–3 下，之后一路无阻 |
-| 卡住时模型只能空等 | 超时后模型自动切到不受该权限阻塞的子任务 |
-| 用户 5 分钟后才点「允许」 | 那一次点击仍会被记成常驻授权，并主动唤醒模型继续 |
+v1 的做法是「点一次执行命令 = 本会话所有命令免审」。那不是批准某件事，而是把整类权限交出去，授权面被悄悄放大，而且面板上看不出到底放行了什么。
 
-## 安装
+v2 的语义：
 
-```bash
-# 在 DSH 里
-plugin_manager install_bundle "C:\path\to\dsh-approval-preflight"
-```
-
-或把本目录放进 profile 的 bundle 列表。包里已带 `cordis.patch.yml`，安装后自动插入一行 Host 插件与一个 Client 模块。
-
-> 首次安装/替换同一个包后如未生效，重启一次 DSH：Host 侧插件模块按 ESM 缓存加载，替换已加载过的包需要新的模块世代。
-
-## 使用
-
-不需要手动做任何事。当任务会涉及多次写文件、执行命令或联网时，模型会在开工前登记计划表，面板自动弹开：
-
-- **权限类别**行：`待授权` 点「授权」，`已授权` 可「撤销」，`等待中` 表示有审批超时挂起；
-- **子任务**行：显示状态、依赖是否就绪、需要哪些权限；
-- 底部「全部授权」一次性授权本计划需要的全部类别；
-- `Esc` 关闭面板，输入框上方的「🛡 预检」条随时可以重新打开。
-
-模型可用工具：`preflight_plan`（登记计划）、`preflight_status`（查看进度与可开工项）、`preflight_task`（更新子任务状态）。任务收尾时 `preflight_plan` 传空 `tasks` 数组即可清除计划表，面板随之收起。
-
-## 权限类别
-
-| 类别 | 覆盖 | 说明 |
+| | v1（已废弃） | v2 |
 | --- | --- | --- |
-| `fs-write` | `write` / `edit` | 可能包含工作区外路径 |
-| `exec` | `pwsh` / `bash` / `terminal_*` | 执行命令 |
-| `network` | `web_fetch` / `web_search` | 联网访问 |
-| `danger` | `sandbox_permissions=danger-full-access` | 范围最大，默认包含在可授权列表里但必须由用户显式点击 |
+| 授权单位 | 权限类别（写文件/执行/联网） | 计算图上的一个节点（带语义描述） |
+| 一次批准覆盖 | 本会话同类全部操作 | 该节点的一次成功执行 |
+| 越界 | 同类操作静默放行 | 退回原生审批卡 |
+| 失败重试 | 需要重新点头 | 批准不消耗，可直接重试 |
+| 事后 | 无从核对 | 节点级审计痕迹 |
 
-审批请求只携带工具名与调用 id，插件用 `tools/pre-execute` 记下的 `callId → 参数` 关联来分类；**分类不出来的一律交回原生审批卡**，绝不猜测放行。
+## 使用流程（模型侧）
+
+1. `preflight_graph`：提交计算图（goal + nodes）。节点字段：`id`、`title`、`effect`、`action`、`source`、`target`、`details`、`note`、`dependsOn`、`impacts`、`escalate`、`permission`；
+2. 用户批准后，`preflight_node_start{id}` 开始执行一个节点；
+3. 执行期间，该节点 `impacts` 覆盖的调用自动放行；不覆盖的走原生卡（超时会让路：调用快速失败，模型切到别的节点）；
+4. `preflight_node_end{id, success}` 结束：成功消耗批准，失败保留批准可重试；
+5. 中途要做新事：`preflight_graph_append` 追加节点（不会作废旧批准），而不是重写整图；
+6. `preflight_status` 随时查看节点状态、待批准项、当前执行中的节点。
+
+**影响类型**：`fs-write`（write/edit）、`exec`（pwsh/bash）、`network`（web_fetch/web_search）。其余工具（`terminal_*`、MCP 工具）不参与自动放行。
+
+## 面板
+
+- 顶部：目标 + 计数（待批准 / 执行中 / 已完成 / 节点总数）；
+- 计算图概览：每个节点一个圆点，状态着色，待批准的带小圆点徽标，点击跳到对应卡片；
+- 节点卡：影响类型徽标、节点标题、语义本质（动作 / 来源 / 目标）、模型补充说明、影响标签与依赖；
+- 操作：待批准 →「批准 / 拒绝」；已批准 →「撤销批准」；执行中 → 不可操作；
+- 审计：有历史记录的节点可展开「查看实际执行」，逐条显示工具、摘要与结果；
+- 底部：一键批准全部待批准；提示「批准的是「这件事」，不是某条命令」。
+
+![计算图与权限预检](assets/screenshot-1.png)
 
 ## 配置
-
-`cordis.patch.yml` 里的行配置（都可在 profile patch 中覆盖）：
 
 ```yaml
 - id: approval-preflight
   config:
-    approvalTimeoutSeconds: 90   # 0 = 关闭超时让路，退回阻塞行为
-    enabledClasses: [fs-write, exec, network, danger]
-    maxTasks: 40                 # 计划表行数上限
-    wakeOnGrant: true            # 授权后是否主动唤醒模型
+    approvalTimeoutSeconds: 90   # 节点未覆盖的审批等待多久后让路；0 = 关闭让路
+    nodeIdleSeconds: 600         # 节点执行超时自动关闭（不消耗批准）
+    maxNodes: 80                 # 计算图节点上限
+    wakeOnGrant: true            # 用户批准后主动唤醒模型
 ```
 
 ## 状态与断点续跑
 
-没有独立数据库。计划表来自会话日志里的 `preflight_plan` / `preflight_task` 工具调用参数，授权来自注入的用户消息标记 `[[preflight:grant:...]]`（同样是持久事件）。所以会话恢复后，插件从日志重建计划与授权，不需要用户重新授权。
+没有独立数据库。计算图来自 `preflight_graph` / `preflight_graph_append` 的工具调用参数；批准来自注入的用户消息标记 `[[preflight:approve:<版本>:<节点>]]`；节点执行区间来自 `preflight_node_start` / `preflight_node_end`；审计来自区间内的 `tool/call` + `tool/result`。
+
+重启后按事件顺序回放。回放异常（缺 start、版本不匹配、未知节点）一律 **fail-closed**：该批准按未批准/失效处理，宁可多问一次。
 
 ## 验证
 
 ```bash
-node scripts/selftest.mjs        # 27 项：纯决策逻辑
-node scripts/contract-test.mjs   # 31 项：用假 Cordis 上下文加载真实 index.js
-node scripts/client-test.mjs     # 22 项：在假浏览器里加载真实 client.js
+npm test    # 或分别运行下面三个
+node scripts/selftest.mjs        # 49 项：语义/图/状态机/审批拦截/回放
+node scripts/contract-test.mjs   # 35 项：真实 index.js 在假 Cordis 上下文里的装配
+node scripts/client-test.mjs     # 29 项：真实 client.js 在假浏览器里的渲染与交互
 ```
 
-- **selftest**：权限分类、计划校验与就绪度、已授权请求不转交原生卡、超时让路（`rejected` + 挂起 + 引导注入）、迟到点击转常驻授权并唤醒、从会话日志重建计划与授权（含旧格式标记）、空任务列表清除计划。
-- **contract-test**：`inject` 声明完整性（复刻 Cordis 的 `cannot get property "x" without inject` 规则）、三个工具注册与输出定义、提示词段落、`approval/request` 的 `prepend` 注册与即时放行、面板路由的请求/响应信封、无 web 服务时的降级。
-- **client-test**：模块工厂 id、两个槽位注册、无会话/关闭态返回 `null`、有数据后的状态条文案、自动弹面板、关闭与重开、授权按钮真的打到 Host 通道。
-
-真机链路已验证：右侧面板渲染、Host↔Client 通道、面板授权写入、授权通知注入、模型唤醒。
+真机链路已验证：计算图登记、面板渲染、节点批准、节点执行放行、审计记录、日志重建。
 
 ## 已知限制
 
-- **不接管原生审批卡**：未授权的请求仍显示原生卡片；本插件只拦截「已授权类别」并在超时后让路。这是为了不破坏 Harness 自带的审批 UI。
-- **分类依赖工具名与参数**：第三方 MCP 工具无法归类，永远走原生审批。
-- **超时让路不等于后台执行**：工具调用本身是同步的，插件只能让模型不再被它卡住，并在授权到达后由模型重试；真正的后台补执行需要 `tools.execute` 再派发，属实验性能力，未包含在 1.0 中。
-- **Client 侧自建样式**：按 Harness 规范只用 `--dsw-alias-*` 主题变量，未引入宿主 Client 包。
+- **语义不可验证**：插件无法判断实际命令是否真的做了节点描述的事——这是信任边界。补偿手段是节点级审计痕迹（事后可核对）。
+- **同一时刻只允许一个执行中节点**：代价是模型不能并行跑两个节点，换来干净的审计归属。
+- **不自动放行 `terminal_*` 与 MCP 工具**：前者无法定义「一次调用」边界，后者无法归类。
+- **不接管原生审批卡**：未申报的操作仍然弹原生卡，临时点的那一下只生效一次，不产生节点批准。
+- 审计只记录工具调用摘要，不记录完整参数/输出。
 
 ## 目录
 
 ```
-index.js              Host 入口：inject、工具注册、审批拦截、通道安装
-client.js             浏览器侧：输入框上方的状态条 + shell.overlay 里的侧面板
-lib/classes.js        权限类别与工具分类
-lib/plan.js           计划表校验、就绪度、渲染
-lib/state.js          会话状态机：授权账本、超时让路、日志重建
-lib/channel.js        面板通道：自有 webServer 前缀路由 + 认证栅栏
-lib/tools.js          三个模型侧工具
-lib/rpc.js            通道端点（status / grant / revoke）
+index.js              Host 入口：inject、工具注册、审批拦截、审计挂钩、通道安装
+client.js             浏览器侧：状态条 + 计算图与节点面板
+lib/impacts.js        影响类型、工具归类、调用摘要
+lib/graph.js          计算图校验、追加、就绪度、渲染
+lib/state.js          会话状态机：图/节点/审批/审计/回放/超时
+lib/tools.js          五个模型侧工具
+lib/rpc.js            面板通道端点（status / approve / reject / revoke）
+lib/channel.js        认证过的自有路由
 lib/prompt.js         系统提示词中的工作流规则
 lib/config.js         配置归一化
-lib/messages.js       消息构造与授权标记解析
-scripts/selftest.mjs  纯逻辑自测
-docs/design.md        设计说明与平台机制记录
+lib/messages.js       消息构造与批准标记解析
+scripts/              三套离线测试
+docs/grant-model.md   授权模型设计稿（结构与取舍）
+docs/prototype/       前端原型（HTML + 截图）
+docs/design.md        平台机制与踩坑记录
 ```
 
 ## License

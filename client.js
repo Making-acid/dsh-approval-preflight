@@ -1,15 +1,15 @@
 /**
  * Browser half of the approval-preflight bundle.
  *
- * Two registrations share one tiny store:
- *  - a compact strip in the composer dock that polls the Host and shows the
- *    plan's permission posture;
- *  - a fixed side panel in `shell.overlay` that renders the whole task/permission
- *    table and turns a permission class into a one-click grant.
+ * Two registrations share one small store:
+ *  - a compact strip above the composer that shows how many nodes wait for the
+ *    user's approval;
+ *  - a fixed side panel in `shell.overlay` that renders the computation graph,
+ *    one card per node (essence, impacts, status, approval actions) and the audit
+ *    trail of what actually ran inside a node.
  *
- * The panel is the only place a grant can originate from the UI; the Host only
- * accepts grants through this authenticated channel, and the model has no tool
- * that reaches it.
+ * The panel is the only place an approval can originate. The model has no tool
+ * that reaches this channel.
  */
 
 window.__ModuleLoader__.load({
@@ -30,6 +30,7 @@ window.__ModuleLoader__.load({
       data: null,
       error: '',
       busy: '',
+      expanded: Object.create(null),
       autoOpenedFor: Object.create(null)
     }
     const listeners = new Set()
@@ -82,20 +83,18 @@ window.__ModuleLoader__.load({
 
     function maybeAutoOpen(sessionId, data) {
       if (data === null || typeof data !== 'object') return
-      const missing = data.counts?.missing ?? 0
-      const pending = data.counts?.pending ?? 0
-      if (missing === 0 && pending === 0) return
+      if ((data.counts?.proposed ?? 0) === 0) return
       if (store.autoOpenedFor[sessionId] === true) return
       store.autoOpenedFor[sessionId] = true
       publish({ open: true })
     }
 
-    async function mutate(action, classes) {
+    async function mutate(action, nodeIds) {
       const sessionId = store.sessionId
       if (typeof sessionId !== 'string') return
       publish({ busy: action })
       try {
-        const result = await call(action, { sessionId, classes })
+        const result = await call(action, { sessionId, nodeIds })
         if (result?.view !== undefined) publish({ data: result.view, error: '' })
         else await refresh(sessionId)
       } catch (error) {
@@ -106,55 +105,118 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------------------------------------------------------------
-    // Styles
+    // Labels
+    // ---------------------------------------------------------------------
+
+    const EFFECT_LABELS = {
+      read: '只读', compute: '计算', download: '下载', write: '写入',
+      delete: '删除', execute: '执行', network: '联网'
+    }
+    const IMPACT_LABELS = { 'fs-write': '写文件', 'fs-delete': '删除文件', exec: '执行命令', network: '网络' }
+    const STATUS_LABELS = {
+      proposed: '待批准', approved: '已批准', running: '执行中',
+      done: '已完成', rejected: '已拒绝', revoked: '已撤销'
+    }
+
+    // ---------------------------------------------------------------------
+    // Styles (theme tokens only — no literal colors except artwork-free shadows)
     // ---------------------------------------------------------------------
 
     const CSS = `
 .dshap-strip{display:flex;align-items:center;gap:8px;margin:0 0 6px;padding:0 4px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);}
-.dshap-strip-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);border-radius:999px;padding:2px 10px 2px 8px;font:inherit;cursor:pointer;}
+.dshap-strip-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);border-radius:999px;padding:2px 10px 2px 9px;font:inherit;cursor:pointer;}
 .dshap-strip-btn:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l2);}
 .dshap-strip-btn[data-open="true"]{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary);}
-.dshap-strip-sep{opacity:.45;}
-.dshap-strip-warn{color:var(--dsw-alias-state-warn-primary);}
-.dshap-strip-ok{color:var(--dsw-alias-state-success-primary);}
-.dshap-panel{position:fixed;top:64px;right:16px;bottom:auto;max-height:calc(100vh - 80px);width:min(420px,calc(100vw - 32px));z-index:40;display:flex;flex-direction:column;background:var(--dsw-specific-sidebar-fill);backdrop-filter:blur(18px) saturate(1.05);color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;box-shadow:0 18px 48px rgba(0,0,0,.28);font-size:13px;overflow:hidden;}
-.dshap-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--dsw-alias-border-l1);}
-.dshap-title{font-weight:600;font-size:13px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dshap-ok{color:var(--dsw-alias-state-success-primary);}
+.dshap-warn{color:var(--dsw-alias-state-warn-primary);}
+.dshap-sep{opacity:.45;}
+
+.dshap-panel{position:fixed;top:64px;right:16px;bottom:auto;max-height:calc(100vh - 80px);width:min(468px,calc(100vw - 32px));z-index:40;display:flex;flex-direction:column;background:var(--dsw-specific-sidebar-fill);backdrop-filter:blur(18px) saturate(1.05);color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;box-shadow:0 18px 48px rgba(0,0,0,.28);font-size:13px;overflow:hidden;}
+.dshap-head{display:flex;align-items:center;gap:8px;padding:13px 14px 11px;border-bottom:1px solid var(--dsw-alias-border-l1);}
+.dshap-title{font-weight:600;font-size:13.5px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .dshap-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:7px;border:1px solid transparent;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;font:inherit;}
 .dshap-icon-btn:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}
-.dshap-body{flex:1 1 auto;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:14px;}
-.dshap-goal{font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary);word-break:break-word;}
-.dshap-note{font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary);word-break:break-word;}
-.dshap-section-title{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-secondary);margin-bottom:2px;}
-.dshap-row{display:flex;align-items:flex-start;gap:8px;padding:7px 8px;border-radius:9px;background:var(--dsw-alias-bg-layer-2);}
-.dshap-row + .dshap-row{margin-top:6px;}
-.dshap-row-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px;}
-.dshap-row-title{font-size:12.5px;line-height:1.4;word-break:break-word;}
-.dshap-row-sub{font-size:11px;line-height:1.4;color:var(--dsw-alias-label-secondary);word-break:break-word;}
-.dshap-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;margin-top:5px;background:var(--dsw-alias-state-idle-primary);}
-.dshap-dot[data-state="ok"]{background:var(--dsw-alias-state-success-primary);}
-.dshap-dot[data-state="warn"]{background:var(--dsw-alias-state-warn-primary);}
-.dshap-dot[data-state="error"]{background:var(--dsw-alias-state-error-primary);}
-.dshap-dot[data-state="brand"]{background:var(--dsw-alias-brand-primary);}
-.dshap-chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:1px 7px;font-size:10.5px;line-height:16px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l1);}
-.dshap-chip[data-tone="ok"]{color:var(--dsw-alias-state-success-primary);border-color:transparent;background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 14%,transparent);}
-.dshap-chip[data-tone="warn"]{color:var(--dsw-alias-state-warn-primary);border-color:transparent;background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 14%,transparent);}
-.dshap-chip[data-tone="brand"]{color:var(--dsw-alias-brand-primary);border-color:transparent;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent);}
-.dshap-chip[data-tone="error"]{color:var(--dsw-alias-state-error-primary);border-color:transparent;background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 14%,transparent);}
-.dshap-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px;}
-.dshap-btn{flex:0 0 auto;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:20px;padding:1px 10px;cursor:pointer;}
+.dshap-meta{padding:11px 14px 9px;border-bottom:1px solid var(--dsw-alias-border-l1);}
+.dshap-goal{font-size:13px;line-height:1.5;margin-bottom:8px;word-break:break-word;}
+.dshap-counts{display:flex;flex-wrap:wrap;gap:6px;}
+.dshap-count{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:11px;line-height:18px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l1);}
+.dshap-count.todo{color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent);border-color:transparent;}
+.dshap-count.run{color:var(--dsw-alias-state-warn-primary);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 14%,transparent);border-color:transparent;}
+.dshap-count.done{color:var(--dsw-alias-state-success-primary);background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 14%,transparent);border-color:transparent;}
+
+.dshap-graph-wrap{padding:10px 14px 4px;border-bottom:1px solid var(--dsw-alias-border-l1);}
+.dshap-graph-label{display:flex;align-items:center;gap:6px;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--dsw-alias-label-secondary);}
+.dshap-graph-label .sp{flex:1 1 auto;}
+.dshap-graph{position:relative;height:52px;margin:0 2px;}
+.dshap-graph::before{content:"";position:absolute;left:16px;right:16px;top:21px;height:1.5px;background:var(--dsw-alias-border-l1);}
+.dshap-dots{position:relative;display:flex;justify-content:space-between;align-items:flex-start;padding-top:7px;}
+.dshap-dot2{width:29px;height:29px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9.5px;font-family:ui-monospace,Consolas,monospace;border:1.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);cursor:pointer;position:relative;z-index:1;}
+.dshap-dot2[data-status="done"]{border-color:var(--dsw-alias-state-success-primary);color:var(--dsw-alias-state-success-primary);}
+.dshap-dot2[data-status="running"]{border-color:var(--dsw-alias-state-warn-primary);color:var(--dsw-alias-state-warn-primary);}
+.dshap-dot2[data-status="proposed"]{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);}
+.dshap-dot2[data-status="approved"]{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);}
+.dshap-dot2[data-status="rejected"]{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary);}
+.dshap-dot2 .badge{position:absolute;top:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:var(--dsw-alias-brand-primary);border:2px solid var(--dsw-specific-sidebar-fill);}
+
+.dshap-body{overflow-y:auto;padding:10px 12px 14px;display:flex;flex-direction:column;gap:8px;}
+.dshap-body::-webkit-scrollbar{width:8px;}
+.dshap-body::-webkit-scrollbar-thumb{background:var(--dsw-alias-border-l1);border-radius:8px;}
+.dshap-node{position:relative;padding-left:18px;}
+.dshap-node::before{content:"";position:absolute;left:5px;top:14px;width:9px;height:9px;border-radius:50%;border:2px solid var(--dsw-alias-border-l2);background:var(--dsw-specific-sidebar-fill);}
+.dshap-node[data-status="proposed"]::before{border-color:var(--dsw-alias-brand-primary);}
+.dshap-node[data-status="approved"]::before{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-brand-primary);}
+.dshap-node[data-status="running"]::before{border-color:var(--dsw-alias-state-warn-primary);background:var(--dsw-alias-state-warn-primary);}
+.dshap-node[data-status="done"]::before{border-color:var(--dsw-alias-state-success-primary);background:var(--dsw-alias-state-success-primary);}
+.dshap-node[data-status="rejected"]::before{border-color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-state-error-primary);}
+.dshap-card{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);border-radius:11px;padding:9px 10px 8px;}
+.dshap-node[data-status="proposed"] .dshap-card{border-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,var(--dsw-alias-border-l1));}
+.dshap-node[data-status="running"] .dshap-card{border-color:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 55%,var(--dsw-alias-border-l1));}
+.dshap-card-top{display:flex;align-items:center;gap:7px;}
+.dshap-effect{flex:0 0 auto;font-size:10.5px;line-height:18px;padding:0 7px;border-radius:6px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l1);}
+.dshap-effect[data-kind="download"]{color:var(--dsw-alias-brand-primary);border-color:transparent;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent);}
+.dshap-effect[data-kind="write"]{color:var(--dsw-alias-brand-primary);border-color:transparent;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent);}
+.dshap-effect[data-kind="execute"]{color:var(--dsw-alias-state-warn-primary);border-color:transparent;background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 14%,transparent);}
+.dshap-effect[data-kind="delete"]{color:var(--dsw-alias-state-error-primary);border-color:transparent;background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 14%,transparent);}
+.dshap-nid{font-family:ui-monospace,Consolas,monospace;font-size:10.5px;color:var(--dsw-alias-label-secondary);}
+.dshap-node-title{flex:1 1 auto;min-width:0;font-size:12.5px;line-height:1.4;font-weight:500;word-break:break-word;}
+.dshap-state{flex:0 0 auto;font-size:10.5px;padding:1px 8px;border-radius:999px;line-height:17px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);}
+.dshap-state.proposed{color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent);}
+.dshap-state.approved{color:var(--dsw-alias-brand-primary);}
+.dshap-state.running{color:var(--dsw-alias-state-warn-primary);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 14%,transparent);}
+.dshap-state.done{color:var(--dsw-alias-state-success-primary);background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 14%,transparent);}
+.dshap-state.rejected,.dshap-state.revoked{color:var(--dsw-alias-state-error-primary);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 12%,transparent);}
+.dshap-essence{margin-top:5px;font-size:11.5px;line-height:1.55;color:var(--dsw-alias-label-secondary);word-break:break-word;}
+.dshap-essence b{color:var(--dsw-alias-label-primary);font-weight:500;}
+.dshap-arrow{opacity:.5;margin:0 4px;}
+.dshap-note{margin-top:2px;font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);opacity:.85;word-break:break-word;}
+.dshap-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;}
+.dshap-tag{font-size:10.5px;line-height:17px;padding:0 6px;border-radius:5px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l1);}
+.dshap-tag.impact{color:var(--dsw-alias-brand-primary);border-color:transparent;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent);}
+.dshap-tag.escalate{color:var(--dsw-alias-state-error-primary);border-color:transparent;background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 12%,transparent);}
+.dshap-actions{display:flex;align-items:center;gap:6px;margin-top:8px;}
+.dshap-btn{flex:0 0 auto;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:11.5px;line-height:20px;padding:1px 10px;cursor:pointer;}
 .dshap-btn:hover{border-color:var(--dsw-alias-border-l2);}
 .dshap-btn[data-variant="primary"]{background:var(--dsw-alias-brand-primary);border-color:transparent;color:#fff;}
-.dshap-btn[data-variant="primary"]:hover{filter:brightness(1.06);}
-.dshap-btn[disabled]{opacity:.5;cursor:default;}
-.dshap-btn[data-variant="ghost"]{border-color:transparent;color:var(--dsw-alias-label-secondary);}
-.dshap-btn[data-variant="ghost"]:hover{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);}
+.dshap-btn[data-variant="ghost"]{border-color:transparent;color:var(--dsw-alias-label-secondary);background:transparent;}
+.dshap-btn[disabled]{opacity:.45;cursor:default;}
+.dshap-spacer{flex:1 1 auto;}
+.dshap-expand{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--dsw-alias-label-secondary);background:transparent;border:0;padding:2px 4px;cursor:pointer;font-family:inherit;}
+.dshap-expand:hover{color:var(--dsw-alias-label-primary);}
+.dshap-audit{margin-top:7px;border-top:1px dashed var(--dsw-alias-border-l1);padding-top:7px;display:flex;flex-direction:column;gap:4px;}
+.dshap-audit-title{font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--dsw-alias-label-secondary);opacity:.8;}
+.dshap-audit-row{display:flex;align-items:baseline;gap:6px;font-size:11px;line-height:1.45;color:var(--dsw-alias-label-secondary);}
+.dshap-audit-row .tool{font-family:ui-monospace,Consolas,monospace;font-size:10px;flex:0 0 62px;opacity:.8;}
+.dshap-audit-row .ok{color:var(--dsw-alias-state-success-primary);}
+.dshap-audit-row .err{color:var(--dsw-alias-state-error-primary);}
+.dshap-audit-row .blocked{color:var(--dsw-alias-state-warn-primary);}
+.dshap-audit-row .summary{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .dshap-foot{display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid var(--dsw-alias-border-l1);}
-.dshap-foot-spacer{flex:1 1 auto;}
+.dshap-hint{font-size:10.5px;color:var(--dsw-alias-label-secondary);opacity:.85;}
 .dshap-empty{font-size:12px;line-height:1.6;color:var(--dsw-alias-label-secondary);}
-.dshap-error{margin:0 0 10px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.5;color:var(--dsw-alias-state-error-primary);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 12%,transparent);}
-.dshap-counts{display:flex;flex-wrap:wrap;gap:6px;}
-.dshap-kbd{font-size:10px;color:var(--dsw-alias-label-secondary);opacity:.75;}
+.dshap-error{margin:0 0 8px;padding:7px 9px;border-radius:8px;font-size:11.5px;line-height:1.5;color:var(--dsw-alias-state-error-primary);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 12%,transparent);}
+.dshap-kbd{font-size:10px;color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l1);border-radius:5px;padding:0 5px;line-height:15px;}
+.dshap-flash{animation:dshapFlash .9s ease;}
+@keyframes dshapFlash{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--dsw-alias-brand-primary) 30%,transparent);}35%{box-shadow:0 0 0 4px color-mix(in srgb,var(--dsw-alias-brand-primary) 22%,transparent);}100%{box-shadow:0 0 0 0 transparent;}}
 `
 
     function installStyles(ctx) {
@@ -165,65 +227,51 @@ window.__ModuleLoader__.load({
         tag.dataset.plugin = CHANNEL
         tag.textContent = CSS
         document.head.appendChild(tag)
-        return () => {
-          tag.remove()
-        }
+        return () => tag.remove()
       }, 'approval-preflight: styles')
     }
 
     // ---------------------------------------------------------------------
-    // Small presentational helpers
+    // Helpers
     // ---------------------------------------------------------------------
 
-    function dot(state) {
-      return el('span', { className: 'dshap-dot', 'data-state': state })
-    }
+    const shield = (props) =>
+      el('svg', { viewBox: '0 0 24 24', width: 13, height: 13, fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, 'aria-hidden': true, ...props },
+        el('path', { d: 'M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6l7-3z' }),
+        el('path', { d: 'M9 12l2.2 2.2L15.5 10' }))
 
-    function chip(text, tone) {
-      return el('span', { className: 'dshap-chip', 'data-tone': tone, key: `${tone}:${text}` }, text)
-    }
-
-    function classTone(row) {
-      if (row.granted) return 'ok'
-      if (row.pending) return 'warn'
-      if (row.required) return 'brand'
-      return 'idle'
-    }
-
-    function classStatusText(row) {
-      if (row.granted) return '已授权，同类审批秒过'
-      if (row.pending) return '等待中，超时后已挂起'
-      if (row.required) return '本计划需要，点一下即可授权'
-      return '本计划未申请'
-    }
-
-    function stateTone(state) {
-      if (state === 'done') return 'ok'
-      if (state === 'running') return 'brand'
-      if (state === 'blocked') return 'error'
-      return 'idle'
-    }
-
-    function stateText(state) {
-      if (state === 'done') return '已完成'
-      if (state === 'running') return '进行中'
-      if (state === 'blocked') return '受阻'
-      return '待办'
-    }
-
-    function needsChips(task) {
-      if (!Array.isArray(task.needs) || task.needs.length === 0) return [chip('无需权限', 'ok')]
-      return task.needs.map((need) => {
-        const granted = Array.isArray(store.data?.classes)
-          ? store.data.classes.find((item) => item.id === need)?.granted === true
-          : false
-        return chip(labelOfClass(need), granted ? 'ok' : 'brand')
+    function essenceText(node) {
+      const parts = []
+      if (node.essence?.action) parts.push(String(node.essence.action))
+      if (node.essence?.source) parts.push(el('span', { key: 'src' }, '来源 · ', el('b', null, node.essence.source)))
+      if (node.essence?.target) parts.push(el('span', { key: 'tgt' }, '目标 · ', el('b', null, node.essence.target)))
+      if (node.essence?.details) parts.push(el('span', { key: 'det' }, node.essence.details))
+      const out = []
+      parts.forEach((part, index) => {
+        if (index > 0) out.push(el('span', { className: 'dshap-arrow', key: `a${index}` }, '/'))
+        out.push(typeof part === 'string' ? el('span', { key: `p${index}` }, part) : part)
       })
+      return out
     }
 
-    function labelOfClass(id) {
-      const found = Array.isArray(store.data?.classes) ? store.data.classes.find((item) => item.id === id) : undefined
-      return found?.label?.zh ?? id
+    function impactTags(node) {
+      const tags = (node.impacts ?? []).map((impact) =>
+        el('span', { className: 'dshap-tag impact', key: `i:${impact}` }, IMPACT_LABELS[impact] ?? impact))
+      if (node.escalate === true) tags.push(el('span', { className: 'dshap-tag escalate', key: 'esc' }, '需完全访问'))
+      if ((node.dependsOn ?? []).length > 0) {
+        tags.push(el('span', { className: 'dshap-tag', key: 'dep' }, `依赖 ${node.dependsOn.join('、')}`))
+      }
+      if (node.permission === 'none') tags.push(el('span', { className: 'dshap-tag', key: 'none' }, '无需权限'))
+      return tags
+    }
+
+    function auditRow(entry, index) {
+      const outcome = entry.outcome === 'ok' ? 'ok' : entry.outcome === 'error' ? 'err' : entry.outcome === 'blocked' ? 'blocked' : ''
+      const mark = entry.outcome === 'ok' ? '✓' : entry.outcome === 'error' ? '×' : entry.outcome === 'blocked' ? '⏸' : '·'
+      return el('div', { className: 'dshap-audit-row', key: `au${index}` },
+        el('span', { className: 'tool' }, entry.tool ?? ''),
+        el('span', { className: 'summary', title: entry.summary ?? '' }, entry.summary ?? ''),
+        el('span', { className: outcome }, mark))
     }
 
     // ---------------------------------------------------------------------
@@ -244,37 +292,31 @@ window.__ModuleLoader__.load({
 
       if (sessionId === undefined) return null
       const data = shared.data
-      const hasPlan = data !== null && typeof data === 'object' && Array.isArray(data.tasks) && data.tasks.length > 0
-      if (!hasPlan && shared.open !== true) return null
+      const hasGraph = data !== null && typeof data === 'object' && data.hasGraph === true
+      if (!hasGraph && shared.open !== true) return null
+      const proposed = data?.counts?.proposed ?? 0
+      const running = data?.counts?.running ?? 0
+      const total = data?.counts?.total ?? 0
+      const done = data?.counts?.done ?? 0
 
-      const missing = data?.counts?.missing ?? 0
-      const pending = data?.counts?.pending ?? 0
-      const ready = data?.counts?.ready ?? 0
-
-      return el(
-        'div',
-        { className: 'dshap-strip' },
-        el(
-          'button',
-          {
-            type: 'button',
-            className: 'dshap-strip-btn',
-            'data-open': shared.open === true ? 'true' : 'false',
-            title: '打开任务与权限预检面板',
-            onClick: () => publish({ open: shared.open !== true })
-          },
-          el('span', { 'aria-hidden': true }, '🛡'),
-          el('span', null, '预检'),
-          el('span', { className: 'dshap-strip-sep' }, '·'),
-          missing > 0
-            ? el('span', { className: 'dshap-strip-warn' }, `${missing} 项待授权`)
-            : pending > 0
-              ? el('span', { className: 'dshap-strip-warn' }, `${pending} 项等待中`)
-              : el('span', { className: 'dshap-strip-ok' }, '权限就绪'),
-          el('span', { className: 'dshap-strip-sep' }, '·'),
-          el('span', null, `${ready} 个可开工`)
-        )
-      )
+      return el('div', { className: 'dshap-strip' },
+        el('button', {
+          type: 'button',
+          className: 'dshap-strip-btn',
+          'data-open': shared.open === true ? 'true' : 'false',
+          title: '打开计算图与权限预检面板',
+          onClick: () => publish({ open: shared.open !== true })
+        },
+        shield(),
+        el('span', null, '预检'),
+        el('span', { className: 'dshap-sep' }, '·'),
+        running > 0
+          ? el('span', { className: 'dshap-warn' }, '执行中')
+          : proposed > 0
+            ? el('span', { className: 'dshap-warn' }, `${proposed} 项待批准`)
+            : el('span', { className: 'dshap-ok' }, '权限就绪'),
+        el('span', { className: 'dshap-sep' }, '·'),
+        el('span', null, `${done}/${total} 完成`)))
     }
 
     // ---------------------------------------------------------------------
@@ -297,168 +339,120 @@ window.__ModuleLoader__.load({
       if (shared.open !== true) return null
 
       const data = shared.data
-      const classes = Array.isArray(data?.classes) ? data.classes : []
-      const tasks = Array.isArray(data?.tasks) ? data.tasks : []
-      const missingClasses = classes.filter((row) => row.required && !row.granted).map((row) => row.id)
+      const nodes = Array.isArray(data?.nodes) ? data.nodes : []
       const busy = shared.busy
+      const proposedIds = nodes.filter((node) => node.status === 'proposed').map((node) => node.id)
 
-      return el(
-        'div',
-        { className: 'dshap-panel', role: 'dialog', 'aria-label': '任务与权限预检' },
-        el(
-          'div',
-          { className: 'dshap-head' },
-          el('span', { 'aria-hidden': true }, '🛡'),
-          el('span', { className: 'dshap-title' }, '任务与权限预检'),
-          el(
-            'button',
-            {
-              type: 'button',
-              className: 'dshap-icon-btn',
-              title: '关闭（Esc）',
-              onClick: () => publish({ open: false })
-            },
-            '×'
-          )
-        ),
-        el(
-          'div',
-          { className: 'dshap-body' },
+      function toggle(id) {
+        const next = { ...store.expanded }
+        if (next[id] === true) delete next[id]
+        else next[id] = true
+        publish({ expanded: next })
+      }
+
+      function jump(id) {
+        const target = document.getElementById(`dshap-node-${id}`)
+        if (target !== null) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          target.classList.add('dshap-flash')
+          setTimeout(() => target.classList.remove('dshap-flash'), 1000)
+        }
+      }
+
+      return el('div', { className: 'dshap-panel', role: 'dialog', 'aria-label': '计算图与权限预检' },
+        el('div', { className: 'dshap-head' },
+          shield({ style: { color: 'var(--dsw-alias-brand-primary)' } }),
+          el('span', { className: 'dshap-title' }, '计算图与权限预检'),
+          el('button', { type: 'button', className: 'dshap-icon-btn', title: '关闭（Esc）', onClick: () => publish({ open: false }) }, '×')),
+
+        el('div', { className: 'dshap-meta' },
+          el('div', { className: 'dshap-goal' }, data?.goal ? `目标：${data.goal}` : '还没有登记计算图'),
+          el('div', { className: 'dshap-counts' },
+            el('span', { className: 'dshap-count todo' }, `${data?.counts?.proposed ?? 0} 待批准`),
+            el('span', { className: 'dshap-count run' }, `${data?.counts?.running ?? 0} 执行中`),
+            el('span', { className: 'dshap-count done' }, `${data?.counts?.done ?? 0} 已完成`),
+            el('span', { className: 'dshap-count' }, `${data?.counts?.total ?? 0} 个节点`))),
+
+        data !== null && nodes.length > 0
+          ? el('div', { className: 'dshap-graph-wrap' },
+              el('div', { className: 'dshap-graph-label' },
+                el('span', null, '计算图'), el('span', { className: 'sp' }), el('span', null, '点击跳转')),
+              el('div', { className: 'dshap-graph' },
+                el('div', { className: 'dshap-dots' }, nodes.map((node) =>
+                  el('div', {
+                    key: `dot:${node.id}`,
+                    className: 'dshap-dot2',
+                    'data-status': node.status,
+                    title: `${node.id} · ${node.title}`,
+                    onClick: () => jump(node.id)
+                  }, node.id, node.status === 'proposed' ? el('span', { className: 'badge' }) : null)))))
+          : null,
+
+        el('div', { className: 'dshap-body' },
           shared.error !== '' ? el('div', { className: 'dshap-error' }, shared.error) : null,
           data === null
             ? el('div', { className: 'dshap-empty' }, '正在读取预检状态…')
-            : tasks.length === 0
-              ? el(
-                  'div',
-                  { className: 'dshap-empty' },
-                  '这个会话还没有登记计划表。',
+            : nodes.length === 0
+              ? el('div', { className: 'dshap-empty' },
+                  '这个会话还没有计算图。',
                   el('br'),
-                  '当需求涉及多次写文件、执行命令或联网时，模型会在开工前调用 preflight_plan，把任务拆解和所需权限登记到这里。'
-                )
-              : el(
-                  'div',
-                  null,
-                  el('div', { className: 'dshap-section-title' }, '目标'),
-                  el('div', { className: 'dshap-goal' }, data.goal || '(未填写)'),
-                  data.note ? el('div', { className: 'dshap-note' }, data.note) : null,
-                  el('div', { className: 'dshap-counts', style: { marginTop: '8px' } }, [
-                    chip(`${data.counts?.tasks ?? tasks.length} 个子任务`, 'idle'),
-                    chip(`${data.counts?.ready ?? 0} 个可开工`, 'ok'),
-                    (data.counts?.missing ?? 0) > 0 ? chip(`${data.counts.missing} 项待授权`, 'brand') : null,
-                    (data.counts?.pending ?? 0) > 0 ? chip(`${data.counts.pending} 项等待中`, 'warn') : null
-                  ].filter(Boolean))
-                ),
-          data !== null && tasks.length > 0
-            ? el(
-                'div',
-                null,
-                el('div', { className: 'dshap-section-title' }, '权限类别'),
-                classes.map((row) =>
-                  el(
-                    'div',
-                    { className: 'dshap-row', key: `class:${row.id}` },
-                    dot(classTone(row)),
-                    el(
-                      'div',
-                      { className: 'dshap-row-main' },
-                      el('div', { className: 'dshap-row-title' }, row.label?.zh ?? row.id),
-                      el(
-                        'div',
-                        { className: 'dshap-row-sub' },
-                        classStatusText(row),
-                        row.label?.hintZh ? ` · ${row.label.hintZh}` : ''
-                      )
-                    ),
-                    row.granted
-                      ? el(
-                          'button',
-                          {
-                            type: 'button',
-                            className: 'dshap-btn',
-                            'data-variant': 'ghost',
-                            disabled: busy !== '',
-                            onClick: () => mutate('revoke', [row.id])
-                          },
-                          '撤销'
-                        )
-                      : el(
-                          'button',
-                          {
-                            type: 'button',
-                            className: 'dshap-btn',
-                            'data-variant': row.required || row.pending ? 'primary' : undefined,
-                            disabled: busy !== '',
-                            onClick: () => mutate('grant', [row.id])
-                          },
-                          busy === 'grant' ? '授权中…' : '授权'
-                        )
-                  )
-                )
-              )
-            : null,
-          data !== null && tasks.length > 0
-            ? el(
-                'div',
-                null,
-                el('div', { className: 'dshap-section-title' }, '子任务'),
-                tasks.map((task) =>
-                  el(
-                    'div',
-                    { className: 'dshap-row', key: `task:${task.id}` },
-                    dot(task.state === 'done' ? 'ok' : task.ready ? 'brand' : task.state === 'blocked' ? 'error' : 'idle'),
-                    el(
-                      'div',
-                      { className: 'dshap-row-main' },
-                      el(
-                        'div',
-                        { className: 'dshap-row-title' },
-                        `${task.id} · ${task.title}`,
-                        task.ready ? ' ' : '',
-                        task.ready ? chip('可开工', 'ok') : null
-                      ),
-                      el(
-                        'div',
-                        { className: 'dshap-row-sub' },
-                        `${stateText(task.state)}`,
-                        task.missingDeps.length > 0 ? ` · 等前置 ${task.missingDeps.join('/')}` : '',
-                        task.note ? ` · ${task.note}` : ''
-                      ),
-                      el('div', { className: 'dshap-chips' }, needsChips(task))
-                    )
-                  )
-                )
-              )
-            : null
-        ),
-        el(
-          'div',
-          { className: 'dshap-foot' },
-          el(
-            'button',
-            {
-              type: 'button',
-              className: 'dshap-btn',
-              'data-variant': 'primary',
-              disabled: busy !== '' || missingClasses.length === 0,
-              onClick: () => mutate('grant', missingClasses)
-            },
-            busy === 'grant' ? '授权中…' : missingClasses.length > 0 ? `全部授权（${missingClasses.length}）` : '已全部授权'
-          ),
-          el('span', { className: 'dshap-foot-spacer' }),
-          el('span', { className: 'dshap-kbd' }, 'Esc 关闭'),
-          el(
-            'button',
-            {
-              type: 'button',
-              className: 'dshap-btn',
-              'data-variant': 'ghost',
-              disabled: busy !== '',
-              onClick: () => refresh(shared.sessionId)
-            },
-            '刷新'
-          )
-        )
-      )
+                  '当需求涉及写文件、执行命令或联网时，模型会先调用 preflight_graph 把「要做的事 + 会碰什么」列出来，你再逐节点批准。')
+              : nodes.map((node) => {
+                  const expanded = shared.expanded[node.id] === true
+                  const audit = Array.isArray(node.audit) ? node.audit : []
+                  const actions = []
+                  if (node.status === 'proposed') {
+                    actions.push(el('button', {
+                      key: 'approve', type: 'button', className: 'dshap-btn', 'data-variant': 'primary',
+                      disabled: busy !== '', onClick: () => mutate('approve', [node.id])
+                    }, '批准'))
+                    actions.push(el('button', {
+                      key: 'reject', type: 'button', className: 'dshap-btn',
+                      disabled: busy !== '', onClick: () => mutate('reject', [node.id])
+                    }, '拒绝'))
+                  } else if (node.status === 'approved') {
+                    actions.push(el('button', {
+                      key: 'revoke', type: 'button', className: 'dshap-btn', 'data-variant': 'ghost',
+                      disabled: busy !== '', onClick: () => mutate('revoke', [node.id])
+                    }, '撤销批准'))
+                  }
+                  return el('div', {
+                    key: node.id, className: 'dshap-node', 'data-status': node.status, id: `dshap-node-${node.id}`
+                  },
+                    el('div', { className: 'dshap-card' },
+                      el('div', { className: 'dshap-card-top' },
+                        el('span', { className: 'dshap-effect', 'data-kind': node.effect }, EFFECT_LABELS[node.effect] ?? node.effect),
+                        el('span', { className: 'dshap-nid' }, node.id),
+                        el('span', { className: 'dshap-node-title' }, node.title),
+                        el('span', { className: `dshap-state ${node.status}` }, STATUS_LABELS[node.status] ?? node.status)),
+                      el('div', { className: 'dshap-essence' }, essenceText(node)),
+                      node.note ? el('div', { className: 'dshap-note' }, node.note) : null,
+                      el('div', { className: 'dshap-tags' }, impactTags(node)),
+                      actions.length > 0 || audit.length > 0
+                        ? el('div', { className: 'dshap-actions' },
+                            actions,
+                            el('span', { className: 'dshap-spacer' }),
+                            audit.length > 0
+                              ? el('button', { type: 'button', className: 'dshap-expand', onClick: () => toggle(node.id) },
+                                  expanded ? '收起实际执行' : `查看实际执行 (${audit.length})`)
+                              : null)
+                        : null,
+                      expanded && audit.length > 0
+                        ? el('div', { className: 'dshap-audit' },
+                            el('div', { className: 'dshap-audit-title' }, '实际执行痕迹'),
+                            audit.map((entry, index) => auditRow(entry, index)))
+                        : null))
+                })),
+
+        el('div', { className: 'dshap-foot' },
+          el('button', {
+            type: 'button', className: 'dshap-btn', 'data-variant': 'primary',
+            disabled: busy !== '' || proposedIds.length === 0,
+            onClick: () => mutate('approve', proposedIds)
+          }, busy === 'approve' ? '批准中…' : proposedIds.length > 0 ? `批准全部待批准（${proposedIds.length}）` : '无待批准'),
+          el('span', { className: 'dshap-hint' }, '批准的是「这件事」，不是某条命令'),
+          el('span', { className: 'dshap-spacer' }),
+          el('span', { className: 'dshap-kbd' }, 'Esc')))
     }
 
     // ---------------------------------------------------------------------
@@ -470,34 +464,12 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         runtime = ctx
         installStyles(ctx)
-        ctx.effect(
-          () =>
-            ctx.slots.inject('conversation.input.dock', () =>
-              ctx.slots.register(
-                {
-                  name: 'conversation.input.dock',
-                  id: 'approval-preflight-strip',
-                  order: 60
-                },
-                Strip
-              )
-            ),
-          'approval-preflight: composer strip'
-        )
-        ctx.effect(
-          () =>
-            ctx.slots.inject('shell.overlay', () =>
-              ctx.slots.register(
-                {
-                  name: 'shell.overlay',
-                  id: 'approval-preflight-panel',
-                  order: 90
-                },
-                Panel
-              )
-            ),
-          'approval-preflight: side panel'
-        )
+        ctx.effect(() => ctx.slots.inject('conversation.input.dock', () =>
+          ctx.slots.register({ name: 'conversation.input.dock', id: 'approval-preflight-strip', order: 60 }, Strip)),
+          'approval-preflight: composer strip')
+        ctx.effect(() => ctx.slots.inject('shell.overlay', () =>
+          ctx.slots.register({ name: 'shell.overlay', id: 'approval-preflight-panel', order: 90 }, Panel)),
+          'approval-preflight: side panel')
       }
     }
   }

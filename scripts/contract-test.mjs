@@ -1,16 +1,15 @@
 /**
  * Offline contract test for the Host entry point.
  *
- * `scripts/selftest.mjs` covers the pure decision logic. This file covers the
- * wiring that only fails at activation time in the real app — and therefore used
- * to require a restart to discover:
+ * `scripts/selftest.mjs` covers the pure decision logic; this file covers the
+ * wiring that only fails at activation time in the real app:
  *
- *  - the exported `inject` list contains every service the code touches
- *    (Cordis throws `cannot get property "x" without inject` otherwise);
- *  - all three tools register with a usable output definition;
+ *  - the exported `inject` list contains every service the code touches;
+ *  - all five tools register with a usable output definition;
  *  - the prompt section is contributed;
- *  - the `approval/request` listener is registered with `prepend` and answers a
- *    granted class with `allowed-once` without delegating;
+ *  - `tools/pre-execute`, `tools/result` and `approval/request` (prepended) are
+ *    registered, and an approval requested while a node runs is answered without
+ *    delegating;
  *  - the panel route registers on `webServer`, enforces the admission fence, and
  *    round-trips the real `client-request` / `server-response` envelope;
  *  - activation still succeeds when the optional web services are absent.
@@ -40,10 +39,10 @@ function fakeAgent(id) {
   const agent = {
     id,
     session: { snapshotEvents: () => [] },
-    injected: [],
     followups: [],
+    injects: [],
     inject(message) {
-      agent.injected.push(message)
+      agent.injects.push(message)
     },
     followup(message) {
       agent.followups.push(message)
@@ -63,37 +62,30 @@ function fakeRequest(url, envelope) {
 }
 
 function fakeResponse() {
-  const response = {
+  return {
     status: 0,
     headers: {},
     body: '',
     writeHead(status, headers) {
-      response.status = status
-      response.headers = headers ?? {}
+      this.status = status
+      this.headers = headers ?? {}
     },
     end(text) {
-      response.body = text ?? ''
+      this.body = text ?? ''
     }
   }
-  return response
 }
 
 /**
- * Minimal Cordis stand-in.
- *
- * Reproduces the two activation rules that only the real runtime enforces:
- *  - reading a service property requires that service to be declared for the
- *    current fiber (`cannot get property "x" without inject`);
- *  - `ctx.inject(deps, callback)` starts a *nested fiber* whose declarations are
- *    `deps` — the services need not appear in the plugin's top-level `inject`,
- *    and a dependency that never becomes available simply never runs the body.
+ * Minimal Cordis stand-in. Reading a service property requires that service to be
+ * declared for the current fiber, and `ctx.inject(deps, cb)` starts a nested fiber
+ * whose declarations are `deps` — the same rules the real runtime enforces.
  */
 function fakeContext({ withWeb = true } = {}) {
   const agents = new Map()
   const tools = []
   const sections = []
   const listeners = new Map()
-  const effects = []
   const routes = []
 
   const services = {
@@ -127,7 +119,6 @@ function fakeContext({ withWeb = true } = {}) {
       ...services,
       effect(callback) {
         const disposer = callback()
-        if (typeof disposer === 'function') effects.push(disposer)
         return typeof disposer === 'function' ? disposer : () => {}
       },
       on(event, listener, options) {
@@ -153,15 +144,7 @@ function fakeContext({ withWeb = true } = {}) {
     })
   }
 
-  return {
-    scope: buildScope(new Set(injectList)),
-    agents,
-    tools,
-    sections,
-    listeners,
-    effects,
-    routes
-  }
+  return { scope: buildScope(new Set(injectList)), agents, tools, sections, listeners, routes }
 }
 
 // ---------------------------------------------------------------------------
@@ -176,39 +159,43 @@ console.log('activation (web profile)')
 const wired = fakeContext({ withWeb: true })
 const agent = fakeAgent('session-contract')
 wired.agents.set(agent.id, agent)
-apply(wired.scope, { approvalTimeoutSeconds: 30 })
+apply(wired.scope, { approvalTimeoutSeconds: 30, nodeIdleSeconds: 60 })
 
-equal('three tools registered', wired.tools.length, 3)
-equal('tools are the documented ones', wired.tools.map((tool) => tool.name).sort().join(','), 'preflight_plan,preflight_status,preflight_task')
+equal('five tools registered', wired.tools.length, 5)
+equal(
+  'tools are the documented ones',
+  wired.tools.map((tool) => tool.name).sort().join(','),
+  'preflight_graph,preflight_graph_append,preflight_node_end,preflight_node_start,preflight_status'
+)
 ok('every tool has an output definition', wired.tools.every((tool) => tool.output?.schema !== undefined && typeof tool.output.render === 'function'))
-ok('tool parameters are object schemas', wired.tools.every((tool) => tool.parameters?.type === 'object'))
 equal('prompt section contributed', wired.sections.length, 1)
-ok('prompt section names the workflow', wired.sections[0].text.includes('preflight_plan'))
+ok('prompt section names the graph workflow', wired.sections[0].text.includes('preflight_graph'))
 
 const approvalListener = wired.listeners.get('approval/request')?.[0]
 ok('approval/request listener registered', approvalListener !== undefined)
 equal('approval listener prepends', approvalListener.options?.prepend, true)
 ok('pre-execute listener registered', wired.listeners.get('tools/pre-execute')?.length === 1)
+ok('tools/result listener registered', wired.listeners.get('tools/result')?.length === 1)
 equal('panel route registered', wired.routes.length, 1)
 equal('panel route path', wired.routes[0].path, '/dsh-approval-preflight')
-equal('panel route kind', wired.routes[0].kind, 'prefix')
 
 // ---------------------------------------------------------------------------
-console.log('plan tool -> panel -> grant -> auto-allow')
-const planTool = wired.tools.find((tool) => tool.name === 'preflight_plan')
-const statusTool = wired.tools.find((tool) => tool.name === 'preflight_status')
-const executed = await planTool.execute(
+console.log('graph -> panel -> approve -> run -> auto-allow')
+const byName = new Map(wired.tools.map((tool) => [tool.name, tool]))
+const graphTool = byName.get('preflight_graph')
+const graphResult = await graphTool.execute(
   {
     goal: 'contract',
-    tasks: [
-      { id: 'T1', title: 'read', needs: [] },
-      { id: 'T2', title: 'run tests', needs: ['exec'], dependsOn: ['T1'] }
+    nodes: [
+      { id: 'N1', title: 'read', effect: 'read' },
+      { id: 'N2', title: 'download', effect: 'download', action: '下载', source: 'npm', target: '依赖目录', dependsOn: ['N1'] },
+      { id: 'N3', title: 'write', effect: 'write', target: 'src/x.ts', dependsOn: ['N2'] }
     ]
   },
-  { agent, callId: 'call-plan' }
+  { agent, callId: 'c-graph' }
 )
-ok('plan tool returns ok', executed.ok === true)
-equal('missing class reported', executed.missing.join(','), 'exec')
+ok('graph tool returns ok', graphResult.ok === true)
+equal('pending node reported', graphResult.pending.join(','), 'N2,N3')
 
 const route = wired.routes[0]
 async function callRoute(endpoint, payload) {
@@ -222,37 +209,51 @@ async function callRoute(endpoint, payload) {
 
 const statusCall = await callRoute('status', { sessionId: agent.id })
 equal('status route answers', statusCall.status, 200)
-ok('status envelope shape', statusCall.body.type === 'server-response' && statusCall.body.rpcId === 'rpc-1' && statusCall.body.result.ok === true)
-equal('status lists the plan tasks', statusCall.body.result.value.tasks.length, 2)
+ok('status envelope shape', statusCall.body.type === 'server-response' && statusCall.body.result.ok === true)
+equal('status lists the graph nodes', statusCall.body.result.value.nodes.length, 3)
 
-const grantCall = await callRoute('grant', { sessionId: agent.id, classes: ['exec'] })
-ok('grant accepted', grantCall.body.result.ok === true && grantCall.body.result.value.accepted.join(',') === 'exec')
-ok('grant wakes the model', agent.followups.length === 1)
-ok('grant notice is machine readable', agent.followups[0].content[0].text.includes('[[preflight:grant:exec]]'))
+const approveCall = await callRoute('approve', { sessionId: agent.id, nodeIds: ['N2'] })
+ok('approve accepted', approveCall.body.result.ok === true && approveCall.body.result.value.approved.join(',') === 'N2')
+ok('approval wakes the model', agent.followups.length === 1)
+ok('approval notice is machine readable', agent.followups[0].content[0].text.includes('[[preflight:approve:1:N2]]'))
 
-// a matching dispatched call is classified through the pre-execute record
+const startTool = byName.get('preflight_node_start')
+const endTool = byName.get('preflight_node_end')
+ok('read node starts', (await startTool.execute({ id: 'N1' }, { agent, callId: 'c-s1' })).ok === true)
+ok('read node ends', (await endTool.execute({ id: 'N1', success: true }, { agent, callId: 'c-e1' })).ok === true)
+ok('approved node starts', (await startTool.execute({ id: 'N2' }, { agent, callId: 'c-s2' })).ok === true)
+
+// a matching call is classified through the pre-execute record and answered
 const preExecute = wired.listeners.get('tools/pre-execute')[0].listener
-await preExecute({ agent, callId: 'call-exec', name: 'pwsh', arguments: { command: 'pnpm test' } }, () => Promise.resolve('allow'))
-
+await preExecute({ agent, callId: 'call-net', name: 'web_fetch', arguments: { url: 'https://registry.npmjs.org/x' } }, () => Promise.resolve('allow'))
 let delegated = 0
-const outcome = await approvalListener.listener(
-  { agent, toolName: 'pwsh', callId: 'call-exec' },
-  () => {
-    delegated += 1
-    return Promise.resolve('rejected')
-  }
-)
-equal('granted exec short-circuits to allowed-once', outcome, 'allowed-once')
+const outcome = await approvalListener.listener({ agent, toolName: 'web_fetch', callId: 'call-net' }, () => {
+  delegated += 1
+  return Promise.resolve('rejected')
+})
+equal('covered call short-circuits to allowed-once', outcome, 'allowed-once')
 equal('native answerer untouched', delegated, 0)
 
-const cleared = await statusTool.execute({}, { agent, callId: 'call-status' })
-ok('status tool agrees the class is granted', cleared.granted.includes('exec'))
+// a call outside the node's declaration is never auto-approved
+await preExecute({ agent, callId: 'call-exec', name: 'pwsh', arguments: { command: 'rm -rf /tmp/x' } }, () => Promise.resolve('allow'))
+let delegatedExec = 0
+await approvalListener.listener({ agent, toolName: 'pwsh', callId: 'call-exec' }, () => {
+  delegatedExec += 1
+  return Promise.resolve('rejected')
+})
+ok('uncovered impact delegates to the native card', delegatedExec === 1)
+
+// finishing the node consumes the approval
+await endTool.execute({ id: 'N2', success: true }, { agent, callId: 'c-e2' })
+const afterRun = await callRoute('status', { sessionId: agent.id })
+equal('node done in the panel', afterRun.body.result.value.nodes.find((node) => node.id === 'N2').status, 'done')
+ok('audit recorded', afterRun.body.result.value.nodes.find((node) => node.id === 'N2').audit.length >= 1)
 
 // ---------------------------------------------------------------------------
 console.log('degradation (no web carrier)')
 const headless = fakeContext({ withWeb: false })
 apply(headless.scope, {})
-equal('tools still register without web services', headless.tools.length, 3)
+equal('tools still register without web services', headless.tools.length, 5)
 equal('no route registered', headless.routes.length, 0)
 ok('approval listener still registered', headless.listeners.get('approval/request')?.length === 1)
 

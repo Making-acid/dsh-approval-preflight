@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>审批预检 · 计算图与权限节点（设计原型）</title>
+<style>
+  :root{
+    --bg:#0f1115; --bg-soft:#151922; --card:#1a1f2a; --card-2:#202634;
+    --line:#2a3040; --line-soft:#232936;
+    --text:#e8ecf4; --text-2:#9aa4b8; --text-3:#6b7488;
+    --brand:#6c8cff; --brand-soft:rgba(108,140,255,.16);
+    --ok:#3fbf87; --ok-soft:rgba(63,191,135,.15);
+    --warn:#e0a33e; --warn-soft:rgba(224,163,62,.16);
+    --danger:#e5645f; --danger-soft:rgba(229,100,95,.16);
+    --violet:#a07cf5; --violet-soft:rgba(160,124,245,.16);
+    --shadow:0 24px 60px rgba(0,0,0,.45);
+    --radius:16px;
+  }
+  html[data-theme="light"]{
+    --bg:#f2f4f8; --bg-soft:#e9edf5; --card:#ffffff; --card-2:#f6f8fc;
+    --line:#dbe1ec; --line-soft:#e7ecf4;
+    --text:#141a24; --text-2:#5a6577; --text-3:#8b95a7;
+    --brand:#3b63f0; --brand-soft:rgba(59,99,240,.10);
+    --ok:#1f9d68; --ok-soft:rgba(31,157,104,.10);
+    --warn:#b5791b; --warn-soft:rgba(181,121,27,.12);
+    --danger:#cf4a45; --danger-soft:rgba(207,74,69,.10);
+    --violet:#7a52e0; --violet-soft:rgba(122,82,224,.10);
+    --shadow:0 20px 48px rgba(20,30,50,.14);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    background:
+      radial-gradient(1100px 620px at 78% -10%, rgba(108,140,255,.16), transparent 62%),
+      radial-gradient(900px 520px at 8% 108%, rgba(160,124,245,.13), transparent 60%),
+      var(--bg);
+    color:var(--text); -webkit-font-smoothing:antialiased;
+  }
+  /* ---- fake app chrome behind the panel, so placement reads like the real UI ---- */
+  .app{position:fixed; inset:0; display:flex; flex-direction:column; opacity:.5; filter:saturate(.8)}
+  .app-top{height:52px; display:flex; align-items:center; gap:14px; padding:0 22px; border-bottom:1px solid var(--line-soft)}
+  .app-title{font-size:13px; color:var(--text-2)}
+  .app-body{flex:1; display:flex; min-height:0}
+  .app-side{width:238px; border-right:1px solid var(--line-soft); padding:16px 14px; display:flex; flex-direction:column; gap:10px}
+  .side-item{height:30px; border-radius:8px; background:var(--bg-soft)}
+  .side-item.short{width:62%}
+  .app-main{flex:1; padding:28px 32px; display:flex; flex-direction:column; gap:14px}
+  .bubble{max-width:560px; height:78px; border-radius:14px; background:var(--bg-soft)}
+  .bubble.right{align-self:flex-end; width:420px}
+  .composer{position:fixed; left:270px; right:520px; bottom:26px; height:74px; border-radius:16px; background:var(--bg-soft); border:1px solid var(--line-soft)}
+
+  /* ---- strip ---- */
+  .strip{position:fixed; left:270px; bottom:112px; display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-2)}
+  .strip-btn{display:inline-flex; align-items:center; gap:7px; padding:3px 11px 3px 9px; border-radius:999px;
+    border:1px solid var(--line); background:var(--card); color:var(--text-2); cursor:pointer; font:inherit}
+  .strip-btn:hover{color:var(--text); border-color:var(--brand)}
+  .shield{width:13px; height:13px; display:inline-block}
+
+  /* ---- panel ---- */
+  .panel{
+    position:fixed; top:64px; right:22px; width:472px; max-height:calc(100vh - 88px);
+    display:flex; flex-direction:column; border-radius:var(--radius); overflow:hidden;
+    background:var(--card); border:1px solid var(--line); box-shadow:var(--shadow); font-size:13px;
+  }
+  .panel-head{display:flex; align-items:center; gap:9px; padding:14px 16px 12px; border-bottom:1px solid var(--line-soft)}
+  .panel-head .title{font-weight:600; font-size:13.5px; letter-spacing:.01em; flex:1}
+  .icon-btn{width:26px; height:26px; display:inline-flex; align-items:center; justify-content:center;
+    border-radius:8px; border:1px solid transparent; background:transparent; color:var(--text-2); cursor:pointer; font:inherit; font-size:15px}
+  .icon-btn:hover{background:var(--card-2); color:var(--text)}
+
+  .panel-meta{padding:12px 16px 10px; border-bottom:1px solid var(--line-soft)}
+  .goal{font-size:13px; line-height:1.55; margin-bottom:9px}
+  .counts{display:flex; flex-wrap:wrap; gap:6px}
+  .count{display:inline-flex; align-items:center; gap:5px; padding:2px 9px; border-radius:999px; font-size:11px; line-height:18px;
+    background:var(--card-2); color:var(--text-2); border:1px solid var(--line-soft)}
+  .count b{font-weight:600}
+  .count.todo{color:var(--brand); background:var(--brand-soft); border-color:transparent}
+  .count.run{color:var(--warn); background:var(--warn-soft); border-color:transparent}
+  .count.done{color:var(--ok); background:var(--ok-soft); border-color:transparent}
+
+  .panel-body{overflow-y:auto; padding:10px 12px 14px; display:flex; flex-direction:column; gap:8px}
+  .panel-body::-webkit-scrollbar{width:8px}
+  .panel-body::-webkit-scrollbar-thumb{background:var(--line); border-radius:8px}
+
+  /* ---- computation graph overview ---- */
+  .graph-wrap{padding:10px 16px 4px; border-bottom:1px solid var(--line-soft)}
+  .graph-label{display:flex; align-items:center; gap:6px; font-size:10.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--text-3); margin-bottom:2px}
+  .graph-label .lg{flex:1}
+  .graph{position:relative; height:58px; margin:0 2px}
+  .graph::before{content:""; position:absolute; left:16px; right:16px; top:22px; height:1.5px; background:var(--line)}
+  .graph-dots{position:relative; display:flex; justify-content:space-between; align-items:flex-start; padding:8px 0 0}
+  .gdot{width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-size:9.5px; font-family:ui-monospace,Consolas,monospace; letter-spacing:.02em;
+    border:1.5px solid var(--line); background:var(--card); color:var(--text-3); cursor:pointer;
+    transition:transform .12s, box-shadow .12s; position:relative; z-index:1}
+  .gdot:hover{transform:translateY(-1px); box-shadow:0 4px 12px rgba(0,0,0,.25)}
+  .gdot[data-status="done"]{border-color:var(--ok); color:var(--ok); background:var(--ok-soft)}
+  .gdot[data-status="running"]{border-color:var(--warn); color:var(--warn); background:var(--warn-soft); box-shadow:0 0 0 3px var(--warn-soft)}
+  .gdot[data-status="proposed"]{border-color:var(--brand); color:var(--brand); background:var(--brand-soft)}
+  .gdot[data-status="approved"]{border-color:var(--brand); color:var(--brand); background:var(--card)}
+  .gdot[data-status="rejected"]{border-color:var(--danger); color:var(--danger); background:var(--danger-soft)}
+  .gdot .badge{position:absolute; top:-3px; right:-3px; width:9px; height:9px; border-radius:50%; background:var(--brand); border:2px solid var(--card)}
+  .node.flash .card{animation:flash .9s ease}
+  @keyframes flash{0%{box-shadow:0 0 0 0 var(--brand-soft)}30%{box-shadow:0 0 0 4px var(--brand-soft)}100%{box-shadow:0 0 0 0 transparent}}
+
+  /* flow list */
+  .flow{position:relative; padding-left:26px}
+  .flow::before{content:""; position:absolute; left:9px; top:14px; bottom:16px; width:1.5px; background:linear-gradient(var(--line),var(--line) 92%,transparent)}
+  .node{position:relative; margin-bottom:8px}
+  .dot{position:absolute; left:-26px; top:14px; width:12px; height:12px; border-radius:50%;
+    background:var(--card); border:2px solid var(--line); box-shadow:0 0 0 3px var(--card)}
+  .node[data-status="todo"] .dot{border-color:var(--brand)}
+  .node[data-status="running"] .dot{border-color:var(--warn); background:var(--warn)}
+  .node[data-status="done"] .dot{border-color:var(--ok); background:var(--ok)}
+  .node[data-status="rejected"] .dot{border-color:var(--danger); background:var(--danger)}
+  .node[data-status="approved"] .dot{border-color:var(--brand); background:var(--brand-soft)}
+
+  .card{border:1px solid var(--line-soft); background:var(--card-2); border-radius:12px; padding:10px 11px 9px}
+  .node[data-status="running"] .card{border-color:rgba(224,163,62,.45); box-shadow:0 0 0 3px var(--warn-soft)}
+  .node[data-status="todo"] .card{border-color:rgba(108,140,255,.35)}
+  .card-top{display:flex; align-items:center; gap:8px}
+  .effect{flex:0 0 auto; font-size:10.5px; line-height:18px; padding:0 7px; border-radius:6px;
+    background:var(--card); color:var(--text-2); border:1px solid var(--line)}
+  .effect[data-kind="download"]{color:var(--violet); background:var(--violet-soft); border-color:transparent}
+  .effect[data-kind="write"]{color:var(--brand); background:var(--brand-soft); border-color:transparent}
+  .effect[data-kind="execute"]{color:var(--warn); background:var(--warn-soft); border-color:transparent}
+  .effect[data-kind="delete"]{color:var(--danger); background:var(--danger-soft); border-color:transparent}
+  .effect[data-kind="read"]{color:var(--text-3)}
+  .nid{font-family:ui-monospace,Consolas,monospace; font-size:10.5px; color:var(--text-3)}
+  .node-title{flex:1; min-width:0; font-size:13px; line-height:1.4; font-weight:500}
+  .state{flex:0 0 auto; font-size:10.5px; padding:1px 8px; border-radius:999px; line-height:17px}
+  .state.todo{color:var(--brand); background:var(--brand-soft)}
+  .state.running{color:var(--warn); background:var(--warn-soft)}
+  .state.done{color:var(--ok); background:var(--ok-soft)}
+  .state.approved{color:var(--brand); background:var(--card); border:1px solid var(--line)}
+  .state.rejected{color:var(--danger); background:var(--danger-soft)}
+
+  .essence{margin-top:6px; font-size:12px; line-height:1.55; color:var(--text-2)}
+  .essence b{color:var(--text); font-weight:500}
+  .arrow{opacity:.5; margin:0 5px}
+  .note{margin-top:3px; font-size:11.5px; line-height:1.5; color:var(--text-3)}
+
+  .tags{display:flex; flex-wrap:wrap; gap:5px; margin-top:7px}
+  .tag{font-size:10.5px; line-height:17px; padding:0 7px; border-radius:5px; background:var(--card); color:var(--text-3); border:1px solid var(--line-soft)}
+  .tag.impact{color:var(--brand); background:var(--brand-soft); border-color:transparent}
+  .tag.escalate{color:var(--danger); background:var(--danger-soft); border-color:transparent}
+  .tag.dep{color:var(--text-3)}
+
+  .card-actions{display:flex; align-items:center; gap:7px; margin-top:9px}
+  .btn{border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--text); font:inherit;
+    font-size:12px; line-height:20px; padding:2px 11px; cursor:pointer}
+  .btn:hover{border-color:var(--brand)}
+  .btn.primary{background:var(--brand); border-color:transparent; color:#fff}
+  .btn.primary:hover{filter:brightness(1.07)}
+  .btn.ghost{border-color:transparent; color:var(--text-2); background:transparent}
+  .btn.ghost:hover{background:var(--card); color:var(--text)}
+  .btn:disabled{opacity:.45; cursor:default}
+  .spacer{flex:1}
+  .expand{display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--text-3); background:transparent;
+    border:0; padding:2px 4px; cursor:pointer; font-family:inherit}
+  .expand:hover{color:var(--text)}
+
+  .audit{margin-top:8px; border-top:1px dashed var(--line-soft); padding-top:8px; display:none; flex-direction:column; gap:5px}
+  .audit.open{display:flex}
+  .audit-title{font-size:10.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--text-3); margin-bottom:1px}
+  .audit-row{display:flex; align-items:baseline; gap:7px; font-size:11.5px; line-height:1.5; color:var(--text-2)}
+  .audit-row .tool{font-family:ui-monospace,Consolas,monospace; font-size:10.5px; color:var(--text-3); flex:0 0 64px}
+  .audit-row .ok{color:var(--ok)}
+  .audit-row .time{margin-left:auto; color:var(--text-3); font-size:10.5px}
+  .audit-hint{margin-top:2px; font-size:10.5px; color:var(--text-3)}
+
+  .panel-foot{display:flex; align-items:center; gap:8px; padding:11px 14px; border-top:1px solid var(--line-soft); background:var(--card)}
+  .hint{font-size:10.5px; color:var(--text-3); margin-left:2px}
+  .kbd{font-size:10px; color:var(--text-3); border:1px solid var(--line); border-radius:5px; padding:0 5px; line-height:15px}
+
+  .toast{position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(14px); opacity:0;
+    background:var(--card); border:1px solid var(--line); color:var(--text); font-size:12px;
+    padding:8px 14px; border-radius:10px; box-shadow:var(--shadow); transition:.18s; pointer-events:none}
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+  <!-- fake app behind, only for placement judgement -->
+  <div class="app" aria-hidden="true">
+    <div class="app-top"><div class="app-title">我有一个项目想加数据库支持…</div></div>
+    <div class="app-body">
+      <div class="app-side">
+        <div class="side-item"></div><div class="side-item short"></div>
+        <div class="side-item"></div><div class="side-item short"></div>
+      </div>
+      <div class="app-main">
+        <div class="bubble"></div><div class="bubble right"></div><div class="bubble"></div>
+      </div>
+    </div>
+    <div class="composer"></div>
+  </div>
+
+  <div class="strip">
+    <button class="strip-btn" onclick="flash('面板已在右侧')">
+      <svg class="shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6l7-3z"/></svg>
+      预检 · <span id="stripCount">3 项待批准</span>
+    </button>
+  </div>
+
+  <section class="panel" aria-label="计算图与权限预检">
+    <div class="panel-head">
+      <svg class="shield" style="color:var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6l7-3z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg>
+      <div class="title">计算图与权限预检</div>
+      <button class="icon-btn" onclick="toggleTheme()" title="切换明暗（原型演示）">◐</button>
+      <button class="icon-btn" onclick="flash('Esc 关闭')" title="关闭">×</button>
+    </div>
+
+    <div class="panel-meta">
+      <div class="goal">目标：给项目加 SQLite 支持并跑通构建</div>
+      <div class="counts" id="counts"></div>
+    </div>
+
+    <div class="graph-wrap">
+      <div class="graph-label"><span class="lg">计算图</span><span id="graphHint" style="text-transform:none;letter-spacing:0"></span></div>
+      <div class="graph">
+        <div class="graph-dots" id="graphDots"></div>
+      </div>
+    </div>
+
+    <div class="panel-body">
+      <div class="flow" id="flow"></div>
+    </div>
+
+    <div class="panel-foot">
+      <button class="btn primary" id="approveAll" onclick="approveAll()">批准全部待批准</button>
+      <span class="hint">批准的是「这件事」，不是某条命令</span>
+      <div class="spacer"></div>
+      <span class="kbd">Esc</span>
+    </div>
+  </section>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+const EFFECTS = { read:'只读', download:'下载', write:'写入', delete:'删除', execute:'执行', network:'联网' };
+const IMPACTS = { 'fs-write':'写文件', exec:'执行命令', network:'网络', 'fs-delete':'删除文件' };
+
+let nodes = [
+  {
+    id:'N1', title:'读现有依赖清单', effect:'read', permission:'none', status:'done',
+    essence:{ action:'读取', target:'package.json 与 node_modules 结构' },
+    impacts:[], deps:[],
+    audit:[{tool:'read', summary:'package.json', outcome:'ok', at:'20:51:04'}]
+  },
+  {
+    id:'N2', title:'下载 better-sqlite3 并写入项目依赖', effect:'download', permission:'required', status:'done',
+    essence:{ action:'下载', source:'npm registry · better-sqlite3', target:'项目依赖目录（node_modules/ 与 package.json）', details:'安装为运行时依赖' },
+    note:'不关心用 pnpm 还是 npm，也不关心是否手写 package.json',
+    impacts:['network','fs-write'], deps:['N1'],
+    audit:[
+      {tool:'web_fetch', summary:'GET registry.npmjs.org/better-sqlite3', outcome:'ok', at:'20:52:11'},
+      {tool:'write', summary:'package.json', outcome:'ok', at:'20:52:13'},
+      {tool:'pwsh', summary:'pnpm add better-sqlite3', outcome:'ok', at:'20:52:38'}
+    ]
+  },
+  {
+    id:'N3', title:'新建数据库封装', effect:'write', permission:'required', status:'running',
+    essence:{ action:'写入', target:'src/db.ts（工作区内）', details:'新增连接与查询封装' },
+    impacts:['fs-write'], deps:['N2'],
+    audit:[{tool:'write', summary:'src/db.ts', outcome:'ok', at:'20:54:02'}]
+  },
+  {
+    id:'N4', title:'把数据库接入现有入口', effect:'write', permission:'required', status:'proposed',
+    essence:{ action:'写入', target:'src/index.ts（工作区内）', details:'在入口注册数据库初始化' },
+    impacts:['fs-write'], deps:['N3'], audit:[]
+  },
+  {
+    id:'N5', title:'跑构建与类型检查', effect:'execute', permission:'required', status:'proposed',
+    essence:{ action:'执行', target:'工作区构建脚本（产物写入 dist/）', details:'确认类型与打包通过' },
+    note:'不关心是 pnpm build 还是 tsc + vite build',
+    impacts:['exec','fs-write'], deps:['N4'], audit:[]
+  }
+];
+
+const STATE_TEXT = { proposed:'待批准', approved:'已批准', running:'执行中', done:'已完成', rejected:'已拒绝' };
+const openAudits = new Set();
+
+const params = new URLSearchParams(location.search);
+if (params.get('theme')) document.documentElement.dataset.theme = params.get('theme');
+
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function render(){
+  const flow = document.getElementById('flow');
+  flow.innerHTML = nodes.map(n => {
+    const impacts = n.impacts.map(i => `<span class="tag impact">${IMPACTS[i]||i}</span>`).join('');
+    const escalate = n.escalate ? '<span class="tag escalate">需完全访问</span>' : '';
+    const dep = n.deps.length ? `<span class="tag dep">依赖 ${n.deps.join('、')}</span>` : '';
+    const essence = [
+      n.essence.action,
+      n.essence.source ? `来源 · <b>${esc(n.essence.source)}</b>` : '',
+      n.essence.target ? `目标 · <b>${esc(n.essence.target)}</b>` : '',
+      n.essence.details ? esc(n.essence.details) : ''
+    ].filter(Boolean).join('<span class="arrow">/</span>');
+
+    const actions = [];
+    if (n.status === 'proposed'){
+      actions.push(`<button class="btn primary" onclick="decide('${n.id}','approved')">批准</button>`);
+      actions.push(`<button class="btn" onclick="decide('${n.id}','rejected')">拒绝</button>`);
+    } else if (n.status === 'approved'){
+      actions.push(`<button class="btn ghost" onclick="decide('${n.id}','proposed')">撤销批准</button>`);
+    } else if (n.status === 'running'){
+      actions.push(`<button class="btn ghost" disabled>执行中…</button>`);
+    }
+    const auditBtn = (n.audit && n.audit.length)
+      ? `<button class="expand" onclick="toggleAudit('${n.id}')">${openAudits.has(n.id) ? '收起' : '查看'}实际执行 (${n.audit.length})</button>` : '';
+    const auditRows = (n.audit||[]).map(a => `<div class="audit-row">
+        <span class="tool">${esc(a.tool)}</span>
+        <span>${esc(a.summary)}</span>
+        <span class="${a.outcome === 'ok' ? 'ok' : ''}">${a.outcome === 'ok' ? '✓' : '×'}</span>
+        <span class="time">${esc(a.at)}</span>
+      </div>`).join('');
+
+    return `<div class="node" data-status="${n.status}">
+      <span class="dot"></span>
+      <div class="card">
+        <div class="card-top">
+          <span class="effect" data-kind="${n.effect}">${EFFECTS[n.effect]||n.effect}</span>
+          <span class="nid">${n.id}</span>
+          <span class="node-title">${esc(n.title)}</span>
+          <span class="state ${n.status}">${STATE_TEXT[n.status]||n.status}</span>
+        </div>
+        <div class="essence">${essence}</div>
+        ${n.note ? `<div class="note">${esc(n.note)}</div>` : ''}
+        <div class="tags">${impacts}${escalate}${dep}${n.permission === 'none' ? '<span class="tag">无需权限</span>' : ''}</div>
+        ${(actions.length || auditBtn) ? `<div class="card-actions">${actions.join('')}<div class="spacer"></div>${auditBtn}</div>` : ''}
+        ${auditRows ? `<div class="audit ${openAudits.has(n.id) ? 'open' : ''}">
+            <div class="audit-title">实际执行痕迹</div>${auditRows}
+            <div class="audit-hint">审计只做事后核对，不阻断执行</div>
+          </div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  const todo = nodes.filter(n => n.status === 'proposed').length;
+  const running = nodes.filter(n => n.status === 'running').length;
+  const done = nodes.filter(n => n.status === 'done').length;
+  document.getElementById('counts').innerHTML =
+    `<span class="count todo"><b>${todo}</b> 待批准</span>` +
+    `<span class="count run"><b>${running}</b> 执行中</span>` +
+    `<span class="count done"><b>${done}</b> 已完成</span>` +
+    `<span class="count"><b>${nodes.length}</b> 个节点</span>`;
+  document.getElementById('stripCount').textContent = `${todo} 项待批准`;
+  document.getElementById('approveAll').disabled = todo === 0;
+
+  // computation graph overview: one dot per node, status colour, click to jump
+  document.getElementById('graphDots').innerHTML = nodes.map(n =>
+    `<div class="gdot" data-status="${n.status}" title="${esc(n.id + ' · ' + n.title)}" onclick="jumpTo('${n.id}')">${n.id}
+       ${n.status === 'proposed' ? '<span class="badge"></span>' : ''}
+     </div>`
+  ).join('');
+  document.getElementById('graphHint').textContent = `${nodes.length} 个节点 · 点击跳转`;
+}
+
+function jumpTo(id){
+  const el = [...document.querySelectorAll('.node')].find(x => x.querySelector('.nid')?.textContent === id);
+  if (!el) return;
+  el.scrollIntoView({ behavior:'smooth', block:'center' });
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 1000);
+}
+
+function decide(id, status){
+  const n = nodes.find(x => x.id === id);
+  if (!n) return;
+  n.status = status;
+  if (status === 'rejected') n.audit = [];
+  render();
+  flash(status === 'approved' ? `${id} 已批准（一次性）` : status === 'rejected' ? `${id} 已拒绝` : `${id} 已撤销`);
+}
+function approveAll(){
+  nodes.filter(n => n.status === 'proposed').forEach(n => n.status = 'approved');
+  render();
+  flash('已批准全部待批准节点');
+}
+function toggleAudit(id){
+  openAudits.has(id) ? openAudits.delete(id) : openAudits.add(id);
+  render();
+}
+function toggleTheme(){
+  const html = document.documentElement;
+  html.dataset.theme = html.dataset.theme === 'dark' ? 'light' : 'dark';
+}
+let toastTimer;
+function flash(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 1600);
+}
+render();
+</script>
+</body>
+</html>

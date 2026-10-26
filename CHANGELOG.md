@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.0] - 2026-10-27
+
+### Changed — breaking
+
+- **The authorization unit is now a computation-graph node, not a permission
+  class.** v1 granted "all `exec` for the session" with one click, which silently
+  widened authority. v2 replaces it with a graph whose nodes state the semantic
+  operation (action / source / target / details) and are approved one by one.
+- One approval covers exactly one successful execution of its node: the approval
+  is consumed on `preflight_node_end{success:true}`, restored on failure, and a
+  node that was never approved can never start.
+- An approval from an older graph version no longer applies (fail closed).
+
+### Added
+
+- `preflight_graph` (declare/replace the graph), `preflight_graph_append`
+  (append nodes without invalidating approvals), `preflight_node_start`,
+  `preflight_node_end`, `preflight_status`.
+- Approval interceptor keyed by the running node and the call's impact kind
+  (`fs-write` / `exec` / `network`); requests outside the node's declaration are
+  delegated to the native card, with the existing timeout hand-off.
+- Audit trail per node: every tool call inside the running window is recorded
+  with its outcome, and the panel shows it after the fact ("只做事后核对，不阻断执行").
+- Panel rewrite: computation-graph overview (status colors, pending badges, click
+  to jump), node cards with semantic essence and impact tags, per-node
+  approve/reject, expandable audit, approve-all.
+- One running node at a time; a node that never ends is closed after
+  `nodeIdleSeconds` (no approval consumed).
+- Session-log replay now covers graph, approvals, node windows and audit; any
+  replay anomaly marks the affected approvals stale instead of trusting them.
+
+### Removed
+
+- Coarse permission classes and their session-wide grants. Old class-grant
+  markers are ignored, and old `needs`-style graphs are not interpreted.
+
 ## [1.0.0] - 2026-10-26
 
 ### Added

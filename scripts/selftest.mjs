@@ -1,23 +1,25 @@
 /**
- * Deterministic self-test for the approval-preflight decision logic.
+ * Deterministic self-test for the graph + node authorization model.
  *
- * The plugin's pure modules (classes, plan, state) do not import any Harness
- * package, so the two behaviours that decide whether the plugin is worth anything
- * can be verified without a running Host or a human clicking an approval card:
+ * The pure modules (impacts, graph, state) do not import any Harness package, so
+ * the behaviours that decide whether the plugin is worth anything can be verified
+ * without a running Host:
  *
- *  1. an approval request whose permission class is already granted is answered
- *     `allowed-once` without ever delegating to the native answerer;
- *  2. an ungranted request times out, is recorded as pending, injects "go do
- *     something else" guidance, and a late native answer still becomes a grant.
+ *  - a node is approved per node, not per permission class;
+ *  - a call is auto-approved only while an approved node is running and the
+ *    call's impact kind is inside that node's declaration;
+ *  - success consumes the approval, failure restores it (retry without re-asking);
+ *  - graph / approvals / node windows / audit replay from the session log, and an
+ *    approval from an older graph version never applies (fail closed).
  *
  * Run: node scripts/selftest.mjs
  */
 
 import assert from 'node:assert/strict'
 
-import { classifyRequest } from '../lib/classes.js'
 import { normalizeConfig } from '../lib/config.js'
-import { normalizePlan, readinessOf, requiredClassesOf } from '../lib/plan.js'
+import { normalizeAppend, normalizeGraph, readinessOf } from '../lib/graph.js'
+import { defaultImpacts, impactOfCall, needsEscalation, summarizeCall } from '../lib/impacts.js'
 import { createState } from '../lib/state.js'
 
 let checks = 0
@@ -33,50 +35,43 @@ function equal(label, actual, expected) {
   console.log(`  ok  ${label}`)
 }
 
-function deferred() {
-  let resolve
-  const promise = new Promise((settle) => {
-    resolve = settle
-  })
-  return { promise, resolve }
+const never = () => new Promise(() => {})
+
+// ---------------------------------------------------------------------------
+console.log('impacts')
+equal('write -> fs-write', impactOfCall('write', { path: 'a.ts' }), 'fs-write')
+equal('edit -> fs-write', impactOfCall('edit', {}), 'fs-write')
+equal('pwsh -> exec', impactOfCall('pwsh', { command: 'ls' }), 'exec')
+equal('web_fetch -> network', impactOfCall('web_fetch', { url: 'https://x' }), 'network')
+equal('own tools never approvals', impactOfCall('preflight_graph', {}), null)
+equal('mcp tools unclassified', impactOfCall('some_mcp_tool', {}), null)
+ok('escalation detected', needsEscalation({ sandbox_permissions: 'danger-full-access' }))
+equal('download defaults', defaultImpacts('download').join(','), 'network,fs-write')
+ok('summary keeps the command', summarizeCall('pwsh', { command: 'pnpm test' }).includes('pnpm test'))
+
+// ---------------------------------------------------------------------------
+console.log('graph')
+const rawGraph = {
+  goal: '给项目加 SQLite 支持',
+  nodes: [
+    { id: 'N1', title: '读依赖清单', effect: 'read' },
+    { id: 'N2', title: '下载 better-sqlite3', effect: 'download', action: '下载', source: 'npm registry', target: '依赖目录', dependsOn: ['N1'] },
+    { id: 'N3', title: '写封装', effect: 'write', target: 'src/db.ts', dependsOn: ['N2'] }
+  ]
 }
-
-const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
-
-// ---------------------------------------------------------------------------
-console.log('classify')
-equal('write -> fs-write', classifyRequest('write', { path: 'a.txt' }), 'fs-write')
-equal('edit -> fs-write', classifyRequest('edit', {}), 'fs-write')
-equal('pwsh -> exec', classifyRequest('pwsh', { command: 'ls' }), 'exec')
-equal('terminal_read -> exec', classifyRequest('terminal_read', {}), 'exec')
-equal('web_fetch -> network', classifyRequest('web_fetch', { url: 'https://x' }), 'network')
-equal('danger-full-access wins', classifyRequest('pwsh', { sandbox_permissions: 'danger-full-access' }), 'danger')
-equal('own tools are never approvals', classifyRequest('preflight_plan', {}), null)
-equal('unknown tool stays unclassified', classifyRequest('some_mcp_tool', {}), null)
+const normalized = normalizeGraph(rawGraph, 40)
+ok('graph validates', normalized.ok)
+equal('graph node count', normalized.graph.nodes.length, 3)
+equal('download node impacts', normalized.graph.nodes[1].impacts.join(','), 'network,fs-write')
+equal('read node needs no permission', normalized.graph.nodes[0].permission, 'none')
+ok('dangling dependency rejected', normalizeGraph({ goal: 'x', nodes: [{ id: 'N1', title: 'a', dependsOn: ['nope'] }] }, 40).ok === false)
+ok('duplicate id rejected', normalizeGraph({ goal: 'x', nodes: [{ id: 'N1', title: 'a' }, { id: 'N1', title: 'b' }] }, 40).ok === false)
+const appended = normalizeAppend(normalized.graph, [{ id: 'N4', title: '跑构建', effect: 'execute' }], 40)
+ok('append works', appended.ok && appended.nodes[0].id === 'N4')
+ok('append rejects duplicate', normalizeAppend(normalized.graph, [{ id: 'N1', title: 'dup' }], 40).ok === false)
 
 // ---------------------------------------------------------------------------
-console.log('plan')
-const normalized = normalizePlan(
-  {
-    goal: 'ship it',
-    tasks: [
-      { id: 'T1', title: 'read', needs: [] },
-      { id: 'T2', title: 'write', needs: ['fs-write'], dependsOn: ['T1'] },
-      { id: 'T3', title: 'network', needs: ['network'], dependsOn: ['T2'] }
-    ]
-  },
-  40
-)
-ok('plan validates', normalized.ok)
-equal('required classes', requiredClassesOf(normalized.plan, ['fs-write', 'exec', 'network', 'danger']).join(','), 'fs-write,network')
-const readiness = readinessOf(normalized.plan, new Set())
-ok('T1 ready with no grants', readiness.get('T1').ready)
-ok('T2 blocked by dependency', readiness.get('T2').ready === false)
-const bad = normalizePlan({ goal: 'x', tasks: [{ id: 'T1', title: 'a', dependsOn: ['nope'] }] }, 40)
-ok('dangling dependency rejected', bad.ok === false && bad.errors.some((line) => line.includes('nope')))
-
-// ---------------------------------------------------------------------------
-console.log('approval interpreter')
+console.log('state machine')
 
 const injected = []
 const fakeAgent = {
@@ -85,155 +80,126 @@ const fakeAgent = {
   inject: (message) => injected.push({ kind: 'inject', message }),
   followup: (message) => injected.push({ kind: 'followup', message })
 }
-
 const fakeCtx = {
   logger: () => ({ info() {}, warn() {} }),
   agents: { get: (id) => (id === fakeAgent.id ? fakeAgent : undefined) },
   approval: { overrideOf: () => 'ask' }
 }
-
-const config = normalizeConfig({
-  approvalTimeoutSeconds: 1,
-  enabledClasses: ['fs-write', 'exec', 'network', 'danger'],
-  maxTasks: 40,
-  wakeOnGrant: true
-})
+const config = normalizeConfig({ approvalTimeoutSeconds: 1, nodeIdleSeconds: 30, maxNodes: 40, wakeOnGrant: true })
 const state = createState(fakeCtx, config)
 
-// 1. granted class: answered instantly, native answerer never sees it
+const registered = state.setGraph(fakeAgent, rawGraph)
+ok('setGraph ok', registered.ok === true)
+equal('graph version starts at 1', state.panelView(fakeAgent.id).version, 1)
+const afterGraph = state.panelView(fakeAgent.id)
+equal('read node auto-approved', afterGraph.nodes.find((node) => node.id === 'N1').status, 'approved')
+equal('write node waits for approval', afterGraph.nodes.find((node) => node.id === 'N3').status, 'proposed')
+
+ok('cannot start an unapproved node', state.startNode(fakeAgent, 'N2').ok === false)
+
+const approved = state.approveNodes(fakeAgent.id, ['N2'])
+equal('approve accepts the node', approved.approved.join(','), 'N2')
+ok('approval wakes the model', injected.some((entry) => entry.kind === 'followup'))
+ok('approval marker is durable-readable', injected.some((entry) => entry.message.content[0].text.includes('[[preflight:approve:1:N2]]')))
+
+ok('read node starts', state.startNode(fakeAgent, 'N1').ok === true)
+ok('read node ends', state.endNode(fakeAgent, 'N1', true).ok === true)
+ok('approved node starts', state.startNode(fakeAgent, 'N2').ok === true)
+ok('only one node may run', state.startNode(fakeAgent, 'N3').ok === false)
+
+// covered call: impact inside the running node's declaration
+state.rememberCall({ agent: fakeAgent, callId: 'call-net', name: 'web_fetch', arguments: { url: 'https://registry.npmjs.org/better-sqlite3' } })
 let delegated = 0
-state.rememberCall({ agent: fakeAgent, callId: 'call-exec', name: 'pwsh', arguments: { command: 'pnpm test' } })
-state.grant(fakeAgent.id, ['exec'])
-const instant = await state.decideApproval(
-  { agent: fakeAgent, toolName: 'pwsh', callId: 'call-exec' },
-  () => {
-    delegated += 1
-    return Promise.resolve('rejected')
+const covered = await state.decideApproval({ agent: fakeAgent, toolName: 'web_fetch', callId: 'call-net' }, () => {
+  delegated += 1
+  return Promise.resolve('rejected')
+})
+equal('covered call -> allowed-once', covered, 'allowed-once')
+equal('native answerer untouched', delegated, 0)
+
+// uncovered impact inside the same node: exec is not in a download node
+state.rememberCall({ agent: fakeAgent, callId: 'call-exec', name: 'pwsh', arguments: { command: 'rm -rf /tmp/x' } })
+const startedAt = Date.now()
+const uncovered = await state.decideApproval({ agent: fakeAgent, toolName: 'pwsh', callId: 'call-exec' }, never)
+ok(`uncovered call -> rejected after timeout (${Date.now() - startedAt}ms)`, uncovered === 'rejected' && Date.now() - startedAt >= 900)
+ok('timeout explains itself to the model', injected.some((entry) => entry.kind === 'inject' && entry.message.content[0].text.includes('没有覆盖这次调用')))
+
+// audit records what ran inside the window
+state.auditCall({ agent: fakeAgent, callId: 'call-net', name: 'web_fetch', arguments: { url: 'https://registry.npmjs.org/better-sqlite3' } })
+state.noteResult({ agent: fakeAgent, callId: 'call-net' }, { isError: false })
+const auditNode = state.panelView(fakeAgent.id).nodes.find((node) => node.id === 'N2')
+ok('audit entry recorded with outcome', auditNode.audit.some((entry) => entry.tool === 'web_fetch' && entry.outcome === 'ok'))
+
+// success consumes the approval; a later call is delegated again
+ok('node ends successfully', state.endNode(fakeAgent, 'N2', true).ok === true)
+equal('success marks the node done', state.panelView(fakeAgent.id).nodes.find((node) => node.id === 'N2').status, 'done')
+state.rememberCall({ agent: fakeAgent, callId: 'call-after', name: 'web_fetch', arguments: { url: 'https://x' } })
+let delegatedAfter = 0
+await state.decideApproval({ agent: fakeAgent, toolName: 'web_fetch', callId: 'call-after' }, () => {
+  delegatedAfter += 1
+  return Promise.resolve('rejected')
+})
+equal('consumed approval no longer applies', delegatedAfter, 1)
+
+// failure restores the approval for a retry
+state.approveNodes(fakeAgent.id, ['N3'])
+ok('N3 starts', state.startNode(fakeAgent, 'N3').ok === true)
+ok('N3 fails', state.endNode(fakeAgent, 'N3', false).ok === true)
+equal('failure restores approval', state.panelView(fakeAgent.id).nodes.find((node) => node.id === 'N3').status, 'approved')
+ok('failed node can be retried without re-approval', state.startNode(fakeAgent, 'N3').ok === true)
+state.endNode(fakeAgent, 'N3', true)
+
+// append keeps existing approvals
+const beforeAppend = state.panelView(fakeAgent.id).nodes.find((node) => node.id === 'N2').status
+const appendedState = state.appendGraph(fakeAgent, [{ id: 'N9', title: '追加步骤', effect: 'write', target: 'x' }])
+ok('append adds a proposed node', appendedState.ok === true && state.panelView(fakeAgent.id).nodes.find((node) => node.id === 'N9').status === 'proposed')
+equal('append keeps existing node status', state.panelView(fakeAgent.id).nodes.find((node) => node.id === 'N2').status, beforeAppend)
+
+// ---------------------------------------------------------------------------
+console.log('log replay')
+
+function replayAgent(events) {
+  return {
+    id: 'session-replay',
+    session: { snapshotEvents: () => events },
+    inject() {},
+    followup() {}
   }
-)
-equal('granted exec -> allowed-once', instant, 'allowed-once')
-equal('native answerer not delegated to', delegated, 0)
-
-// 2. ungranted class: timeout yields rejected + pending + guidance
-const neverAnswers = deferred()
-const started = Date.now()
-const timedOut = await state.decideApproval(
-  { agent: fakeAgent, toolName: 'web_fetch', callId: 'call-network' },
-  () => neverAnswers.promise
-)
-const elapsed = Date.now() - started
-equal('ungranted network -> rejected after timeout', timedOut, 'rejected')
-ok(`timeout honoured (${elapsed}ms)`, elapsed >= 900)
-ok(
-  'guidance injected into the next step',
-  injected.some((entry) => entry.kind === 'inject' && entry.message.content[0].text.includes('审批等待超时'))
-)
-const pendingView = state.panelView(fakeAgent.id)
-ok('pending row visible in the panel', pendingView.classes.find((row) => row.id === 'network')?.pending === true)
-
-// 3. the user answers the native card late: that click becomes a standing grant
-neverAnswers.resolve('allowed-once')
-await tick()
-await tick()
-const afterLate = state.panelView(fakeAgent.id)
-ok('late native answer promoted to a grant', afterLate.classes.find((row) => row.id === 'network')?.granted === true)
-ok(
-  'late grant wakes the model',
-  injected.some((entry) => entry.kind === 'followup' && entry.message.content[0].text.includes('preflight:grant'))
-)
-
-// 4. grant survives re-hydration from the log (injected message is durable)
-const replayAgent = {
-  id: 'session-replay',
-  session: {
-    snapshotEvents: () => [
-      {
-        type: 'tool/call',
-        time: Date.now(),
-        data: {
-          name: 'preflight_plan',
-          arguments: JSON.stringify({ goal: 'replay', tasks: [{ id: 'T1', title: 'a', needs: ['fs-write'] }] })
-        }
-      },
-      {
-        type: 'agent/inbox/spliced',
-        time: Date.now(),
-        data: {
-          inserted: [{ role: 'user', content: [{ type: 'text', text: '[[preflight:grant:fs-write]] 用户已授权' }] }]
-        }
-      }
-    ]
-  },
-  inject() {},
-  followup() {}
 }
-const replayCtx = { ...fakeCtx, agents: { get: (id) => (id === replayAgent.id ? replayAgent : undefined) } }
+const graphArgs = JSON.stringify(rawGraph)
+const replayEvents = [
+  { type: 'tool/call', time: 1, data: { name: 'preflight_graph', callId: 'c0', arguments: graphArgs } },
+  { type: 'tool/call', time: 2, data: { name: 'preflight_node_start', callId: 'c1', arguments: JSON.stringify({ id: 'N1' }) } },
+  { type: 'tool/call', time: 3, data: { name: 'preflight_node_end', callId: 'c2', arguments: JSON.stringify({ id: 'N1', success: true }) } },
+  { type: 'user/message', time: 4, data: { role: 'user', content: [{ type: 'text', text: '[[preflight:approve:1:N2]] 用户已批准' }] } },
+  { type: 'tool/call', time: 5, data: { name: 'preflight_node_start', callId: 'c3', arguments: JSON.stringify({ id: 'N2' }) } },
+  { type: 'tool/call', time: 6, data: { name: 'web_fetch', callId: 'c4', arguments: JSON.stringify({ url: 'https://registry.npmjs.org/x' }) } },
+  { type: 'tool/result', time: 7, data: { turn: 1, step: 2, message: { toolCallId: 'c4' } } },
+  { type: 'tool/call', time: 8, data: { name: 'preflight_node_end', callId: 'c5', arguments: JSON.stringify({ id: 'N2', success: true }) } }
+]
+const replay = replayAgent(replayEvents)
+const replayCtx = { ...fakeCtx, agents: { get: (id) => (id === replay.id ? replay : undefined) } }
 const replayState = createState(replayCtx, config)
-const replayView = replayState.panelView(replayAgent.id)
-ok('plan rebuilt from tool/call events', replayView.tasks.length === 1 && replayView.goal === 'replay')
-ok('grant rebuilt from injected message', replayView.classes.find((row) => row.id === 'fs-write')?.granted === true)
+const replayView = replayState.panelView(replay.id)
+ok('graph rebuilt from tool/call', replayView.hasGraph && replayView.goal === '给项目加 SQLite 支持')
+equal('node window replayed: N1 done', replayView.nodes.find((node) => node.id === 'N1').status, 'done')
+equal('approval replayed: N2 done', replayView.nodes.find((node) => node.id === 'N2').status, 'done')
+ok('audit replayed with outcome', replayView.nodes.find((node) => node.id === 'N2').audit.some((entry) => entry.tool === 'web_fetch' && entry.outcome === 'ok'))
 
-// 5. the legacy marker written by an earlier build still parses (seen in the
-//    wild: `[[preflight:grant]]:fs-write,exec,network ...`)
-const legacyAgent = {
-  id: 'session-legacy',
-  session: {
-    snapshotEvents: () => [
-      {
-        type: 'agent/inbox/spliced',
-        time: Date.now(),
-        data: {
-          inserted: [
-            {
-              role: 'user',
-              content: [{ type: 'text', text: '[[preflight:grant]]:fs-write,exec,network 用户已在预检面板授权：写文件、执行命令、联网访问。' }]
-            }
-          ]
-        }
-      }
-    ]
-  },
-  inject() {},
-  followup() {}
-}
-const legacyState = createState({ ...fakeCtx, agents: { get: (id) => (id === legacyAgent.id ? legacyAgent : undefined) } }, config)
-const legacyView = legacyState.panelView('session-legacy')
-ok(
-  'legacy grant marker still rehydrates',
-  ['fs-write', 'exec', 'network'].every((id) => legacyView.classes.find((row) => row.id === id)?.granted === true)
-)
+const staleEvents = [
+  { type: 'tool/call', time: 1, data: { name: 'preflight_graph', callId: 'c0', arguments: graphArgs } },
+  { type: 'tool/call', time: 2, data: { name: 'preflight_graph', callId: 'c1', arguments: graphArgs } },
+  { type: 'user/message', time: 3, data: { role: 'user', content: [{ type: 'text', text: '[[preflight:approve:1:N2]] 旧版本的批准' }] } }
+]
+const stale = replayAgent(staleEvents)
+const staleState = createState({ ...fakeCtx, agents: { get: (id) => (id === stale.id ? stale : undefined) } }, config)
+equal('approval from an older graph version is ignored', staleState.panelView(stale.id).nodes.find((node) => node.id === 'N2').status, 'proposed')
 
-// 6. a grant notice that was already consumed into a turn (recorded as
-//    `user/message`, not as an inbox splice) must still rehydrate
-const consumedAgent = {
-  id: 'session-consumed',
-  session: {
-    snapshotEvents: () => [
-      {
-        type: 'user/message',
-        time: Date.now(),
-        data: {
-          role: 'user',
-          content: [{ type: 'text', text: '[[preflight:grant:danger]] 用户已在预检面板授权：危险全权。' }]
-        }
-      }
-    ]
-  },
-  inject() {},
-  followup() {}
-}
-const consumedState = createState({ ...fakeCtx, agents: { get: (id) => (id === consumedAgent.id ? consumedAgent : undefined) } }, config)
-ok(
-  'grant consumed into a turn still rehydrates',
-  consumedState.panelView('session-consumed').classes.find((row) => row.id === 'danger')?.granted === true
-)
-
-// 7. an empty task list retires the table
-const clearAgent = { id: 'session-clear', session: { snapshotEvents: () => [] }, inject() {}, followup() {} }
-const clearState = createState({ ...fakeCtx, agents: { get: (id) => (id === clearAgent.id ? clearAgent : undefined) } }, config)
-ok('plan registers', clearState.setPlan(clearAgent, { goal: 'x', tasks: [{ id: 'T1', title: 'a' }] }).ok === true)
-const cleared = clearState.setPlan(clearAgent, { tasks: [] })
-ok('empty task list clears the plan', cleared.ok === true && cleared.cleared === true)
-ok('panel shows no stale tasks', clearState.panelView('session-clear').tasks.length === 0)
+const readiness = readinessOf(normalized.graph.nodes[2], new Map([
+  ['N1', { status: 'done' }],
+  ['N2', { status: 'done' }],
+  ['N3', { status: 'proposed' }]
+]))
+ok('readiness waits for approval', readiness.ready === false && readiness.blockedBy === '待批准')
 
 console.log(`\n${checks} checks passed`)

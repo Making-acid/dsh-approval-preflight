@@ -1,7 +1,7 @@
 {
   "name": "dsh-approval-preflight",
-  "version": "1.0.0",
-  "description": "Plan-first permission preflight for DeepSeek Harness: the model publishes a task/permission table up front, the user grants coarse permission classes once in a side panel, and later approval prompts resolve instantly instead of interrupting the work. Uncovered approvals time out, tell the model to switch to an unblocked subtask, and wake it again when the grant finally arrives. / 开工前把权限一次批完：模型先交任务与权限表，用户在右侧面板一次性授权；之后同类审批秒过，未覆盖的审批超时后让模型先做别的，授权到达自动唤醒。",
+  "version": "2.0.0",
+  "description": "Graph-first permission preflight for DeepSeek Harness: the model declares a computation graph whose nodes carry the semantic operation (download what to where, write what, delete what); the user approves nodes one by one in a side panel, one approval covers one successful execution, uncovered operations still use the native approval card, and every node keeps an audit trail of what actually ran. / 先交计算图、逐节点批准的审批预检：节点写清这件事的本质，用户按节点一次性批准，执行成功即消耗、失败可重试；未申报的操作仍走原生卡，节点内实际跑过什么留有审计痕迹。",
   "type": "module",
   "main": "./index.js",
   "icon": "./icon.svg",
@@ -15,6 +15,7 @@
     "approval",
     "permission",
     "preflight",
+    "computation-graph",
     "vibe-coding",
     "workflow"
   ],

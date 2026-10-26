@@ -1,16 +1,17 @@
 /**
- * dsh-approval-preflight — plan-first permission preflight for DeepSeek Harness.
+ * dsh-approval-preflight — graph-first permission preflight for DeepSeek Harness.
  *
  * The bundle contributes:
- *  - three model-facing tools that publish and maintain a task/permission table,
- *  - an `approval/request` interpreter that answers covered requests instantly,
- *    lets an uncovered request time out so the turn is not blocked, and turns a
- *    late approval click into a standing grant,
- *  - a system-prompt section that teaches the plan-first workflow,
- *  - an authenticated JSON channel for the side panel, and the Client half that
- *    renders it.
+ *  - five model-facing tools: declare a computation graph, append nodes, start and
+ *    end a node, read the graph;
+ *  - an `approval/request` interpreter that answers a call only while an approved
+ *    node is running and the call's impact kind is inside that node's declared
+ *    impacts;
+ *  - an audit trail of what actually ran inside each node;
+ *  - a system-prompt section that teaches the graph-first workflow;
+ *  - an authenticated JSON channel and the Client half that renders the panel.
  *
- * Nothing here widens the model's authority: grants only ever come from a user
+ * Nothing here widens the model's authority: approvals only come from a user
  * action, and an unclassifiable request is always delegated to the native card.
  */
 
@@ -60,12 +61,16 @@ export function apply(ctx, rawConfig) {
       }
     }, 'approval-preflight: tools')
 
-    // Remember dispatched calls so an approval request can be classified by the
-    // arguments that triggered it (an approval request carries only the call id).
+    // Correlate an approval request with the arguments that triggered it, and
+    // record every call that happens inside the running node's window.
     ctx.on('tools/pre-execute', (exec, next) => {
       state.rememberCall(exec)
+      state.auditCall(exec)
       return next()
     })
+
+    // Settle audit outcomes once the call finishes.
+    ctx.on('tools/result', (exec, result) => state.noteResult(exec, result))
 
     // `prepend` matters: the native approval presenter is registered at boot, and
     // only a listener ahead of it can answer without showing the card.

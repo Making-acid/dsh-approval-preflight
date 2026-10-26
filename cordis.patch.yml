@@ -1,8 +1,8 @@
 # dsh-approval-preflight bundle patch.
 #
-# Inserts one Host row: the plugin that owns the preflight plan table, the
-# approval interpreter and the side-panel RPC channel, plus one Client row that
-# renders the panel and its composer strip.
+# Inserts one Host row: the plugin that owns the computation graph, the node
+# approval ledger and the side-panel channel, plus one Client module that renders
+# the panel and its composer strip.
 #
 # Every value below is optional; the plugin fills in these defaults. A patch
 # replaces the targeted row's whole `config`, so user overrides should keep only
@@ -12,23 +12,15 @@
     - id: approval-preflight
       name: dsh-approval-preflight
       config:
-        # How long a non-pre-authorized approval may stay unanswered before the
-        # plugin lets the model move on. The tool call fails fast with a
-        # "waiting for authorization" note instead of blocking the whole turn.
+        # How long an approval the running node does not cover may stay unanswered
+        # before the plugin lets the model move on. The tool call fails fast with a
+        # "not covered by this node" note instead of blocking the turn.
         # Set 0 to restore the old blocking behaviour.
         approvalTimeoutSeconds: 90
-        # Permission classes the preflight may ask for. In the default
-        # `workspace-write` mode the only interruptions are danger-full-access
-        # escalations, so `danger` is included: the panel labels it explicitly and
-        # granting it is always one deliberate click. Drop a class here to make
-        # that kind of request always fall back to the native approval card.
-        enabledClasses:
-          - fs-write
-          - exec
-          - network
-          - danger
-        # Upper bound on plan-table rows. Larger plans are rejected so a table
-        # stays readable in the panel.
-        maxTasks: 40
-        # Wake the model with a follow-up turn when the user grants a class.
+        # A running node that never ends is closed automatically after this many
+        # seconds. Closing does not consume the approval.
+        nodeIdleSeconds: 600
+        # Upper bound on computation-graph nodes, so the panel stays readable.
+        maxNodes: 80
+        # Wake the model with a follow-up turn when the user approves nodes.
         wakeOnGrant: true

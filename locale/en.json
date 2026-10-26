@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Approval Preflight",
-    "description": "Plans the task and its permission needs up front, then grants whole permission classes once in a side panel so later approvals resolve instantly. Uncovered approvals time out, let the model switch to an unblocked subtask, and wake it when the grant finally arrives."
+    "description": "Turns per-call approval prompts into a reviewed computation graph: each node states what the step does (download what to where, write what, delete what), the user approves nodes one by one, and an approval covers exactly one successful execution. Uncovered operations still use the native card, and every node keeps an audit trail of what actually ran."
   }
 }
