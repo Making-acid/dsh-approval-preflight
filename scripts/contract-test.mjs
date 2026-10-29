@@ -21,6 +21,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 
 import { apply, inject as injectList, name as pluginName } from '../index.js'
+import { VERSION } from '../lib/version.js'
 
 let checks = 0
 function ok(label, condition) {
@@ -211,6 +212,11 @@ const statusCall = await callRoute('status', { sessionId: agent.id })
 equal('status route answers', statusCall.status, 200)
 ok('status envelope shape', statusCall.body.type === 'server-response' && statusCall.body.result.ok === true)
 equal('status lists the graph nodes', statusCall.body.result.value.nodes.length, 3)
+equal('status reports the loaded plugin version', statusCall.body.result.value.plugin?.version, VERSION)
+equal('status advertises the panel protocol', statusCall.body.result.value.plugin?.protocol, 2)
+const pingCall = await callRoute('ping', {})
+ok('ping answers without a session', pingCall.body.result.ok === true && pingCall.body.result.value.version === VERSION)
+ok('status tool reports the plugin version', (await wired.tools.find((tool) => tool.name === 'preflight_status').execute({}, { agent, callId: 'c-status' })).pluginVersion === VERSION)
 
 const approveCall = await callRoute('approve', { sessionId: agent.id, nodeIds: ['N2'] })
 ok('approve accepted', approveCall.body.result.ok === true && approveCall.body.result.value.approved.join(',') === 'N2')

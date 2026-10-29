@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.1] - 2026-10-29
+
+### Added
+
+- Build identity: `lib/version.js` is the single source of the version, quoted by
+  the Host log (`apply: start (v2.0.1)`), the panel footer, the `ping`/`status`
+  panel endpoints and the `preflight_status` tool output. After an in-place
+  upgrade the ESM module cache makes "which build is live?" ambiguous; this makes
+  it answerable without guessing from `package.json`.
+- `scripts/selftest.mjs` asserts the constant still matches `package.json`, and
+  the contract/client suites assert it reaches the panel payload and the UI.
+
+### Docs
+
+- `docs/verify.md`: how to restart, what "loaded" looks like, the end-to-end
+  scenario, and the failure modes worth checking first.
+
 ## [2.0.0] - 2026-10-27
 
 ### Changed — breaking

@@ -22,6 +22,7 @@ import { createPromptSection } from './lib/prompt.js'
 import { createRpcHandler } from './lib/rpc.js'
 import { createState } from './lib/state.js'
 import { createTools } from './lib/tools.js'
+import { VERSION } from './lib/version.js'
 
 /** Cordis plugin name (used by logs and diagnostics). */
 export const name = 'approval-preflight'
@@ -40,7 +41,7 @@ export const inject = ['tools', 'systemPrompt', 'agents', 'approval']
  * @param {unknown} rawConfig - the Loader row's `config`.
  */
 export function apply(ctx, rawConfig) {
-  hostLog('apply: start')
+  hostLog(`apply: start (v${VERSION})`)
 
   const config = normalizeConfig(rawConfig)
   const state = createState(ctx, config)
@@ -100,7 +101,7 @@ export function apply(ctx, rawConfig) {
 
     ctx.effect(() => () => state.disposeAll(), 'approval-preflight: state')
 
-    hostLog(`apply: wired (channel=${CHANNEL})`)
+    hostLog(`apply: wired (v${VERSION}, channel=${CHANNEL})`)
   } catch (error) {
     hostLog(`apply: FAILED ${error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error)}`)
     throw error

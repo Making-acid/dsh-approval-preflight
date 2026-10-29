@@ -18,6 +18,8 @@
 
 import assert from 'node:assert/strict'
 
+import { VERSION } from '../lib/version.js'
+
 let checks = 0
 function ok(label, condition) {
   checks += 1
@@ -113,6 +115,7 @@ const basePayload = {
   policy: 'ask',
   goal: '给项目加 SQLite 支持并跑通构建',
   version: 1,
+  plugin: { name: 'dsh-approval-preflight', version: VERSION, protocol: 2 },
   running: null,
   nodes: [
     {
@@ -216,6 +219,7 @@ ok('panel shows the semantic essence', panelText.includes('npm registry') && pan
 ok('panel shows impact tags', panelText.includes('网络') && panelText.includes('写文件'))
 ok('panel shows the model note', panelText.includes('不关心用 pnpm 还是 npm'))
 ok('panel marks a proposed node', panelText.includes('待批准'))
+ok('panel footer shows the loaded build', panelText.includes(`v${VERSION}`))
 
 // graph dots are rendered for every node
 ok('graph dots rendered', findDotByText(autoPanel, 'N1') !== null && findDotByText(autoPanel, 'N3') !== null)

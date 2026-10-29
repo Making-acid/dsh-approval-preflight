@@ -212,6 +212,7 @@ window.__ModuleLoader__.load({
 .dshap-audit-row .summary{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .dshap-foot{display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid var(--dsw-alias-border-l1);}
 .dshap-hint{font-size:10.5px;color:var(--dsw-alias-label-secondary);opacity:.85;}
+.dshap-ver{font-size:10px;line-height:15px;color:var(--dsw-alias-label-secondary);opacity:.65;font-family:ui-monospace,Consolas,monospace;}
 .dshap-empty{font-size:12px;line-height:1.6;color:var(--dsw-alias-label-secondary);}
 .dshap-error{margin:0 0 8px;padding:7px 9px;border-radius:8px;font-size:11.5px;line-height:1.5;color:var(--dsw-alias-state-error-primary);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 12%,transparent);}
 .dshap-kbd{font-size:10px;color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l1);border-radius:5px;padding:0 5px;line-height:15px;}
@@ -452,6 +453,9 @@ window.__ModuleLoader__.load({
           }, busy === 'approve' ? '批准中…' : proposedIds.length > 0 ? `批准全部待批准（${proposedIds.length}）` : '无待批准'),
           el('span', { className: 'dshap-hint' }, '批准的是「这件事」，不是某条命令'),
           el('span', { className: 'dshap-spacer' }),
+          data?.plugin?.version
+            ? el('span', { className: 'dshap-ver', title: `面板协议 ${data.plugin.protocol ?? ''}`.trim() }, `v${data.plugin.version}`)
+            : null,
           el('span', { className: 'dshap-kbd' }, 'Esc')))
     }
 

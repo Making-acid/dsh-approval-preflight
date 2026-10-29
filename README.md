@@ -70,12 +70,13 @@ v2 的语义：
 
 ```bash
 npm test    # 或分别运行下面三个
-node scripts/selftest.mjs        # 49 项：语义/图/状态机/审批拦截/回放
-node scripts/contract-test.mjs   # 35 项：真实 index.js 在假 Cordis 上下文里的装配
-node scripts/client-test.mjs     # 29 项：真实 client.js 在假浏览器里的渲染与交互
+node scripts/selftest.mjs        # 53 项：语义/图/状态机/审批拦截/回放/版本一致性
+node scripts/contract-test.mjs   # 39 项：真实 index.js 在假 Cordis 上下文里的装配与通道往返
+node scripts/client-test.mjs     # 30 项：真实 client.js 在假浏览器里的渲染与交互
 ```
 
-真机链路已验证：计算图登记、面板渲染、节点批准、节点执行放行、审计记录、日志重建。
+离线测试覆盖模型侧工具、审批拦截、会话日志回放、面板渲染与通道往返。**真机（重启后）的确认清单**见
+[docs/verify.md](docs/verify.md)：版本号三处对齐、一次完整的「登记 → 批准 → 执行 → 消耗 → 审计」链路，以及排错顺序。
 
 ## 已知限制
 
@@ -98,8 +99,10 @@ lib/rpc.js            面板通道端点（status / approve / reject / revoke）
 lib/channel.js        认证过的自有路由
 lib/prompt.js         系统提示词中的工作流规则
 lib/config.js         配置归一化
+lib/version.js        版本常量（日志 / 面板 / 工具三处同源）
 lib/messages.js       消息构造与批准标记解析
 scripts/              三套离线测试
+docs/verify.md        重启后的真机验证清单与排错
 docs/grant-model.md   授权模型设计稿（结构与取舍）
 docs/prototype/       前端原型（HTML + 截图）
 docs/design.md        平台机制与踩坑记录

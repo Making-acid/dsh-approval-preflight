@@ -16,11 +16,13 @@
  */
 
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import { normalizeConfig } from '../lib/config.js'
 import { normalizeAppend, normalizeGraph, readinessOf } from '../lib/graph.js'
 import { defaultImpacts, impactOfCall, needsEscalation, summarizeCall } from '../lib/impacts.js'
 import { createState } from '../lib/state.js'
+import { VERSION } from '../lib/version.js'
 
 let checks = 0
 function ok(label, condition) {
@@ -36,6 +38,14 @@ function equal(label, actual, expected) {
 }
 
 const never = () => new Promise(() => {})
+
+// ---------------------------------------------------------------------------
+console.log('identity')
+const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+equal('lib/version.js matches package.json', VERSION, pkg.version)
+equal('package name matches the plugin', pkg.name, 'dsh-approval-preflight')
+ok('package still declares the bundle patch', pkg.dsh?.bundle?.patch === './cordis.patch.yml')
+ok('package still declares the client half', pkg.dsh?.client?.platform === 'web')
 
 // ---------------------------------------------------------------------------
 console.log('impacts')
