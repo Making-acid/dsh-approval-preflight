@@ -28,6 +28,16 @@ profile 里装的是 `link:` 依赖，指向本仓库目录，**不需要重新�
 
 ## 2. 三个「已加载」信号
 
+一条命令先看结论：
+
+```bash
+npm run verify:loaded
+# ✓ 正在跑的就是 v2.0.1，面板路由已在 … 装好。
+# ✗ 日志里的激活行没有版本号：这是 2.0.1 之前的构建，Host 还没重启。
+```
+
+它读 `<DSH_HOME>/logs/approval-preflight.log`（默认 `~/.dsh`），比较最后一次激活版本与 `package.json`。
+
 | 位置 | 期望 |
 | --- | --- |
 | Host 日志 | 最后几行是 `apply: start (v2.0.1)` → `apply: wired (v2.0.1, channel=…)` → `channel: prefix route installed` |

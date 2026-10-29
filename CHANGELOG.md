@@ -18,6 +18,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Docs
 
+- `scripts/live-check.mjs` / `npm run verify:loaded`: reads the plugin log and
+  says whether the running Host is this build and whether the panel route came up,
+  so a stale process is diagnosed in one command instead of by guessing.
 - `docs/verify.md`: how to restart, what "loaded" looks like, the end-to-end
   scenario, and the failure modes worth checking first.
 

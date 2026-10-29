@@ -66,6 +66,7 @@
     "test": "node scripts/selftest.mjs && node scripts/contract-test.mjs && node scripts/client-test.mjs",
     "test:logic": "node scripts/selftest.mjs",
     "test:host": "node scripts/contract-test.mjs",
-    "test:client": "node scripts/client-test.mjs"
+    "test:client": "node scripts/client-test.mjs",
+    "verify:loaded": "node scripts/live-check.mjs"
   }
 }
