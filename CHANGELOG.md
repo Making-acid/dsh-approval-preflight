@@ -4,6 +4,37 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.1.0] - 2026-10-30
+
+### Added
+
+- **Dependency-aware auto-switch.** `dependsOn` is now part of the runtime model, not
+  only display order. When a running node hits an unplanned permission request that
+  nobody answers within `approvalTimeoutSeconds`, the plugin suspends that node
+  (approval kept, running slot released), computes the independent branch
+  (`approved` ∧ dependencies done ∧ dependency closure excludes the suspended node)
+  and hands it to the model by name. With no candidate it says so explicitly instead
+  of letting the turn spin on a retry.
+- **`suspended` node status** with a durable marker
+  `[[preflight:suspend:<graphVersion>:<nodeId>]]`: replayable from the session log,
+  resumable with `preflight_node_start` (no re-approval), revocable from the panel,
+  visible with its reason in the strip and the node card. The idle timeout now
+  suspends instead of silently closing.
+- Dependency cycles are rejected at `preflight_graph` / `preflight_graph_append` time.
+- Panel: dependency-layered graph columns (independent branches stack in one column,
+  arrows show flow), `前置` / `后续` tags, suspend reason, and the "不依赖它的可做节点"
+  hint on a suspended card.
+- `scripts/contract-test.mjs` now validates every tool output against its declared
+  `output.schema` — the check that would have caught the fix below.
+
+### Fixed
+
+- **Every tool failed in a real Host with `value.running must be a string`.** The shared
+  output schema declared `running: string` while the view returned `null` when idle, so
+  the Host's output validator rejected the results of `preflight_graph`,
+  `preflight_node_start`, `preflight_node_end` and `preflight_status`. The view now
+  emits `''` plus `hasRunning`, and the contract suite guards the schema.
+
 ## [2.0.1] - 2026-10-29
 
 ### Added

@@ -107,21 +107,26 @@
 | `impacts` | 预计触发的影响类型：`fs-write` / `exec` / `network` / `fs-delete` |
 | `escalate` | 是否需要提权（danger-full-access）才能完成 |
 | `permission` | `required` = 用户必须批准；`none` = 只展示不拦 |
-| `dependsOn` | 计算图的数据/顺序依赖 |
+| `dependsOn` | 计算图的数据/顺序依赖：决定就绪判定，也决定被挡住时哪些节点是可切换的独立分支 |
 
 ## 5. 节点状态机
 
 ```
 proposed ──用户批准──▶ approved ──模型声明开始──▶ running ──结束(成功)──▶ done（权限已消耗）
    │                     │                        │
-   │                     │                        └──结束(失败)──▶ approved（不消耗，可重试）
+   │                     │                        ├──结束(失败)──▶ approved（不消耗，可重试）
+   │                     │                        └──审批超时/空闲超时──▶ suspended（不消耗，可继续）
    │                     ├──用户撤销──▶ revoked
    │                     └──图被整体重写──▶ stale
    └──用户拒绝──▶ rejected
+
+suspended ──preflight_node_start──▶ running（保留原批准，不需要重新批准）
+suspended ──用户撤销──▶ revoked
 ```
 
 - 同一时刻**只允许一个 running 节点**（启动第二个需先结束当前），保证审计归属干净。
-- `running` 超过 `nodeIdleSeconds`（默认 600s）自动结束并标记失败，不消耗权限。
+- `running` 超过 `nodeIdleSeconds`（默认 600s）自动挂起（`suspended`），不消耗权限。
+- **挡住审批时自动挂起**：`running` 节点遇到未申报的调用，`approvalTimeoutSeconds` 内没等到用户回答 → 自动转 `suspended`，释放执行槽位，并把「不依赖它的可做节点」交给模型（见 §7.3）。
 - `preflight_graph` 整体重写 → 所有旧节点变 `stale`，需重新批准；追加接口不影响已有批准。
 
 ## 6. 用户交互（面板）
@@ -184,13 +189,28 @@ proposed ──用户批准──▶ approved ──模型声明开始──▶ 
    否则 → 交回原生审批卡（可归类时同时启动超时让路）
 ```
 
-### 7.3 超时让路（保留 1.0 行为）
+### 7.3 超时挂起与独立分支切换
 
-可映射但当前没有放行依据（没有 running 节点、或影响类型不在节点范围内）时：
+`dependsOn` 不只是展示用的顺序，它决定「被挡住时还能做什么」：
 
-- 竞争：原生 answerer vs `approvalTimeoutSeconds`
-- 超时 → 记为「等待中」，返回 `rejected` 让工具快速失败，并 `agent.inject()` 提示模型先做其它节点
-- 用户之后在原生卡点「允许」→ 只对那一次生效，**不产生任何授权**（这一点在面板和文档里明确）
+```
+运行中的节点 N
+  └─ 遇到未申报的调用（影响类型不在 N 的申报里）
+       ├─ 用户回答「允许」→ 该调用放行（一次性，不产生节点批准）
+       └─ approvalTimeoutSeconds 内没回答
+            ├─ 自动挂起 N：status = suspended，running = null，批准保留
+            ├─ 计算独立分支：① 已批准 ② 依赖闭包不含 N ③ 依赖全部 done
+            └─ agent.inject() 告诉模型：
+                 「与 N 无依赖、现在能做：M、K。下一步 preflight_node_start M；
+                   N 可稍后 preflight_node_start 继续（不需要重新批准）；
+                   需要那个操作就 append 一个新节点并请用户批准。」
+```
+
+- **为什么只挑独立分支**：执行槽位只有一个；`M` 若依赖 `N`（直接或传递），`N` 没完成时 `M` 的依赖条件不成立，切过去也做不了。所以候选集 = `approved ∧ ready ∧ closure(M) ∌ N`。
+- **没有任何候选时**：明确告诉模型「剩余工作都依赖 N，没有可切换的独立分支」，不要重试；同时把还在等批准的独立节点列出来，让用户知道批准后就能继续。
+- **不改授权**：挂起只释放槽位，不产生新批准；切换目标必须是用户已经批准过的节点。用户没批准的部分只会被「列出来提醒」，不会被自动开始。
+- **可恢复**：挂起是插件自己的限制，不是失败；`preflight_node_start N` 直接续跑，批准仍然有效（一次性授权只在该节点**成功结束**时消耗）。
+- 超时让路发生在「有 running 节点」时；没有 running 节点时审批仍走原生卡（插件不替用户撤回一个它没有上下文可切换的请求）。
 
 ## 8. 审计痕迹
 
@@ -217,7 +237,8 @@ proposed ──用户批准──▶ approved ──模型声明开始──▶ 
 | --- | --- |
 | 计算图 | `tool/call`：`preflight_graph` / `preflight_graph_append` |
 | 节点批准 | 注入的用户消息标记 `[[preflight:approve:<graphVersion>:<nodeId>]]` |
-| 节点执行区间 | `tool/call`：`preflight_node_start` / `preflight_node_end` |
+| 节点挂起 | 注入的用户消息标记 `[[preflight:suspend:<graphVersion>:<nodeId>]]` |
+| 节点执行区间 | `tool/call`：`preflight_node_start` / `preflight_node_end`（`suspended` 后再 start 即续跑） |
 | 审计 | `tool/call` + `tool/result`，按执行区间归属 |
 
 回放规则：按 seq 顺序重建图与节点状态；区间外的调用不归属任何节点；遇到无法解释的事件（缺 start、节点 id 未知、版本不匹配）→ 该节点置 `stale` 并要求重新批准（**fail-closed**：宁可多问，不可多放）。

@@ -114,7 +114,7 @@ window.__ModuleLoader__.load({
     }
     const IMPACT_LABELS = { 'fs-write': '写文件', 'fs-delete': '删除文件', exec: '执行命令', network: '网络' }
     const STATUS_LABELS = {
-      proposed: '待批准', approved: '已批准', running: '执行中',
+      proposed: '待批准', approved: '已批准', running: '执行中', suspended: '已挂起',
       done: '已完成', rejected: '已拒绝', revoked: '已撤销'
     }
 
@@ -143,19 +143,22 @@ window.__ModuleLoader__.load({
 .dshap-count.todo{color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent);border-color:transparent;}
 .dshap-count.run{color:var(--dsw-alias-state-warn-primary);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 14%,transparent);border-color:transparent;}
 .dshap-count.done{color:var(--dsw-alias-state-success-primary);background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 14%,transparent);border-color:transparent;}
+.dshap-count.susp{color:var(--dsw-alias-state-warn-primary);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 14%,transparent);border-color:transparent;}
 
 .dshap-graph-wrap{padding:10px 14px 4px;border-bottom:1px solid var(--dsw-alias-border-l1);}
 .dshap-graph-label{display:flex;align-items:center;gap:6px;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--dsw-alias-label-secondary);}
 .dshap-graph-label .sp{flex:1 1 auto;}
-.dshap-graph{position:relative;height:52px;margin:0 2px;}
-.dshap-graph::before{content:"";position:absolute;left:16px;right:16px;top:21px;height:1.5px;background:var(--dsw-alias-border-l1);}
-.dshap-dots{position:relative;display:flex;justify-content:space-between;align-items:flex-start;padding-top:7px;}
-.dshap-dot2{width:29px;height:29px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9.5px;font-family:ui-monospace,Consolas,monospace;border:1.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);cursor:pointer;position:relative;z-index:1;}
+.dshap-levels{display:flex;align-items:flex-start;gap:6px;overflow:auto;max-height:128px;padding:6px 2px 8px;}
+.dshap-level{display:flex;align-items:center;gap:6px;flex:0 0 auto;}
+.dshap-lv-dots{display:flex;flex-direction:column;gap:6px;}
+.dshap-lv-arrow{color:var(--dsw-alias-label-secondary);opacity:.45;font-size:11px;line-height:1;}
+.dshap-dot2{width:29px;height:29px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9.5px;font-family:ui-monospace,Consolas,monospace;border:1.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);cursor:pointer;position:relative;z-index:1;flex:0 0 auto;}
 .dshap-dot2[data-status="done"]{border-color:var(--dsw-alias-state-success-primary);color:var(--dsw-alias-state-success-primary);}
 .dshap-dot2[data-status="running"]{border-color:var(--dsw-alias-state-warn-primary);color:var(--dsw-alias-state-warn-primary);}
 .dshap-dot2[data-status="proposed"]{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);}
 .dshap-dot2[data-status="approved"]{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary);}
 .dshap-dot2[data-status="rejected"]{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary);}
+.dshap-dot2[data-status="suspended"]{border-color:var(--dsw-alias-state-warn-primary);color:var(--dsw-alias-state-warn-primary);border-style:dashed;}
 .dshap-dot2 .badge{position:absolute;top:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:var(--dsw-alias-brand-primary);border:2px solid var(--dsw-specific-sidebar-fill);}
 
 .dshap-body{overflow-y:auto;padding:10px 12px 14px;display:flex;flex-direction:column;gap:8px;}
@@ -168,9 +171,13 @@ window.__ModuleLoader__.load({
 .dshap-node[data-status="running"]::before{border-color:var(--dsw-alias-state-warn-primary);background:var(--dsw-alias-state-warn-primary);}
 .dshap-node[data-status="done"]::before{border-color:var(--dsw-alias-state-success-primary);background:var(--dsw-alias-state-success-primary);}
 .dshap-node[data-status="rejected"]::before{border-color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-state-error-primary);}
+.dshap-node[data-status="suspended"]::before{border-color:var(--dsw-alias-state-warn-primary);}
 .dshap-card{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);border-radius:11px;padding:9px 10px 8px;}
 .dshap-node[data-status="proposed"] .dshap-card{border-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,var(--dsw-alias-border-l1));}
 .dshap-node[data-status="running"] .dshap-card{border-color:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 55%,var(--dsw-alias-border-l1));}
+.dshap-node[data-status="suspended"] .dshap-card{border-color:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 45%,var(--dsw-alias-border-l1));}
+.dshap-suspend{margin-top:5px;font-size:11px;line-height:1.5;color:var(--dsw-alias-state-warn-primary);word-break:break-word;}
+.dshap-switch{margin-top:2px;font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary);word-break:break-word;}
 .dshap-card-top{display:flex;align-items:center;gap:7px;}
 .dshap-effect{flex:0 0 auto;font-size:10.5px;line-height:18px;padding:0 7px;border-radius:6px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l1);}
 .dshap-effect[data-kind="download"]{color:var(--dsw-alias-brand-primary);border-color:transparent;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent);}
@@ -185,6 +192,7 @@ window.__ModuleLoader__.load({
 .dshap-state.running{color:var(--dsw-alias-state-warn-primary);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 14%,transparent);}
 .dshap-state.done{color:var(--dsw-alias-state-success-primary);background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 14%,transparent);}
 .dshap-state.rejected,.dshap-state.revoked{color:var(--dsw-alias-state-error-primary);background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 12%,transparent);}
+.dshap-state.suspended{color:var(--dsw-alias-state-warn-primary);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 14%,transparent);}
 .dshap-essence{margin-top:5px;font-size:11.5px;line-height:1.55;color:var(--dsw-alias-label-secondary);word-break:break-word;}
 .dshap-essence b{color:var(--dsw-alias-label-primary);font-weight:500;}
 .dshap-arrow{opacity:.5;margin:0 4px;}
@@ -241,6 +249,35 @@ window.__ModuleLoader__.load({
         el('path', { d: 'M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6l7-3z' }),
         el('path', { d: 'M9 12l2.2 2.2L15.5 10' }))
 
+    /**
+     * Group nodes into dependency layers: column 0 has no prerequisites, column N
+     * needs something from the previous ones. Sequential work reads as a flow;
+     * independent branches stack in the same column — exactly the split the
+     * auto-switch uses when a permission stalls.
+     */
+    function graphLayers(nodes) {
+      const byId = new Map(nodes.map((node) => [node.id, node]))
+      const depth = new Map()
+      function visit(id, seen) {
+        if (depth.has(id)) return depth.get(id)
+        const node = byId.get(id)
+        if (node === undefined || seen.has(id)) return 0
+        seen.add(id)
+        let level = 0
+        for (const dep of node.dependsOn ?? []) level = Math.max(level, visit(dep, seen) + 1)
+        depth.set(id, level)
+        return level
+      }
+      for (const node of nodes) visit(node.id, new Set())
+      const layers = []
+      for (const node of nodes) {
+        const level = depth.get(node.id) ?? 0
+        if (layers[level] === undefined) layers[level] = []
+        layers[level].push(node)
+      }
+      return layers.filter((layer) => layer !== undefined)
+    }
+
     function essenceText(node) {
       const parts = []
       if (node.essence?.action) parts.push(String(node.essence.action))
@@ -261,6 +298,9 @@ window.__ModuleLoader__.load({
       if (node.escalate === true) tags.push(el('span', { className: 'dshap-tag escalate', key: 'esc' }, '需完全访问'))
       if ((node.dependsOn ?? []).length > 0) {
         tags.push(el('span', { className: 'dshap-tag', key: 'dep' }, `依赖 ${node.dependsOn.join('、')}`))
+      }
+      if ((node.dependents ?? []).length > 0) {
+        tags.push(el('span', { className: 'dshap-tag', key: 'deps' }, `后续 ${node.dependents.join('、')}`))
       }
       if (node.permission === 'none') tags.push(el('span', { className: 'dshap-tag', key: 'none' }, '无需权限'))
       return tags
@@ -297,6 +337,7 @@ window.__ModuleLoader__.load({
       if (!hasGraph && shared.open !== true) return null
       const proposed = data?.counts?.proposed ?? 0
       const running = data?.counts?.running ?? 0
+      const suspended = data?.counts?.suspended ?? 0
       const total = data?.counts?.total ?? 0
       const done = data?.counts?.done ?? 0
 
@@ -313,9 +354,11 @@ window.__ModuleLoader__.load({
         el('span', { className: 'dshap-sep' }, '·'),
         running > 0
           ? el('span', { className: 'dshap-warn' }, '执行中')
-          : proposed > 0
-            ? el('span', { className: 'dshap-warn' }, `${proposed} 项待批准`)
-            : el('span', { className: 'dshap-ok' }, '权限就绪'),
+          : suspended > 0
+            ? el('span', { className: 'dshap-warn' }, `${suspended} 项已挂起`)
+            : proposed > 0
+              ? el('span', { className: 'dshap-warn' }, `${proposed} 项待批准`)
+              : el('span', { className: 'dshap-ok' }, '权限就绪'),
         el('span', { className: 'dshap-sep' }, '·'),
         el('span', null, `${done}/${total} 完成`)))
     }
@@ -341,6 +384,7 @@ window.__ModuleLoader__.load({
 
       const data = shared.data
       const nodes = Array.isArray(data?.nodes) ? data.nodes : []
+      const switchable = Array.isArray(data?.switchable) ? data.switchable : []
       const busy = shared.busy
       const proposedIds = nodes.filter((node) => node.status === 'proposed').map((node) => node.id)
 
@@ -371,22 +415,27 @@ window.__ModuleLoader__.load({
           el('div', { className: 'dshap-counts' },
             el('span', { className: 'dshap-count todo' }, `${data?.counts?.proposed ?? 0} 待批准`),
             el('span', { className: 'dshap-count run' }, `${data?.counts?.running ?? 0} 执行中`),
+            (data?.counts?.suspended ?? 0) > 0
+              ? el('span', { className: 'dshap-count susp' }, `${data?.counts?.suspended ?? 0} 已挂起`)
+              : null,
             el('span', { className: 'dshap-count done' }, `${data?.counts?.done ?? 0} 已完成`),
             el('span', { className: 'dshap-count' }, `${data?.counts?.total ?? 0} 个节点`))),
 
         data !== null && nodes.length > 0
           ? el('div', { className: 'dshap-graph-wrap' },
               el('div', { className: 'dshap-graph-label' },
-                el('span', null, '计算图'), el('span', { className: 'sp' }), el('span', null, '点击跳转')),
-              el('div', { className: 'dshap-graph' },
-                el('div', { className: 'dshap-dots' }, nodes.map((node) =>
-                  el('div', {
-                    key: `dot:${node.id}`,
-                    className: 'dshap-dot2',
-                    'data-status': node.status,
-                    title: `${node.id} · ${node.title}`,
-                    onClick: () => jump(node.id)
-                  }, node.id, node.status === 'proposed' ? el('span', { className: 'badge' }) : null)))))
+                el('span', null, '计算图'), el('span', { className: 'sp' }), el('span', null, '按依赖分层 · 点击跳转')),
+              el('div', { className: 'dshap-levels' }, graphLayers(nodes).map((layer, index) =>
+                el('div', { className: 'dshap-level', key: `lv:${index}` },
+                  index > 0 ? el('span', { className: 'dshap-lv-arrow' }, '→') : null,
+                  el('div', { className: 'dshap-lv-dots' }, layer.map((node) =>
+                    el('div', {
+                      key: `dot:${node.id}`,
+                      className: 'dshap-dot2',
+                      'data-status': node.status,
+                      title: `${node.id} · ${node.title}${(node.dependsOn ?? []).length > 0 ? `（前置 ${node.dependsOn.join('、')}）` : ''}`,
+                      onClick: () => jump(node.id)
+                    }, node.id, node.status === 'proposed' ? el('span', { className: 'badge' }) : null)))))))
           : null,
 
         el('div', { className: 'dshap-body' },
@@ -411,7 +460,7 @@ window.__ModuleLoader__.load({
                       key: 'reject', type: 'button', className: 'dshap-btn',
                       disabled: busy !== '', onClick: () => mutate('reject', [node.id])
                     }, '拒绝'))
-                  } else if (node.status === 'approved') {
+                  } else if (node.status === 'approved' || node.status === 'suspended') {
                     actions.push(el('button', {
                       key: 'revoke', type: 'button', className: 'dshap-btn', 'data-variant': 'ghost',
                       disabled: busy !== '', onClick: () => mutate('revoke', [node.id])
@@ -429,6 +478,13 @@ window.__ModuleLoader__.load({
                       el('div', { className: 'dshap-essence' }, essenceText(node)),
                       node.note ? el('div', { className: 'dshap-note' }, node.note) : null,
                       el('div', { className: 'dshap-tags' }, impactTags(node)),
+                      node.status === 'suspended'
+                        ? el('div', { className: 'dshap-suspend' },
+                            `⏸ 已挂起：${node.suspendReason || '等待审批（批准保留）'}`)
+                        : null,
+                      node.status === 'suspended' && switchable.length > 0
+                        ? el('div', { className: 'dshap-switch' }, `不依赖它的可做节点：${switchable.join('、')}`)
+                        : null,
                       actions.length > 0 || audit.length > 0
                         ? el('div', { className: 'dshap-actions' },
                             actions,

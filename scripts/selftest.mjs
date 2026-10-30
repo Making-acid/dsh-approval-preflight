@@ -19,7 +19,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 import { normalizeConfig } from '../lib/config.js'
-import { normalizeAppend, normalizeGraph, readinessOf } from '../lib/graph.js'
+import { dependencyClosure, dependentsOf, normalizeAppend, normalizeGraph, readinessOf } from '../lib/graph.js'
 import { defaultImpacts, impactOfCall, needsEscalation, summarizeCall } from '../lib/impacts.js'
 import { createState } from '../lib/state.js'
 import { VERSION } from '../lib/version.js'
@@ -79,6 +79,16 @@ ok('duplicate id rejected', normalizeGraph({ goal: 'x', nodes: [{ id: 'N1', titl
 const appended = normalizeAppend(normalized.graph, [{ id: 'N4', title: '跑构建', effect: 'execute' }], 40)
 ok('append works', appended.ok && appended.nodes[0].id === 'N4')
 ok('append rejects duplicate', normalizeAppend(normalized.graph, [{ id: 'N1', title: 'dup' }], 40).ok === false)
+ok('dependency cycle is rejected', normalizeGraph({
+  goal: 'cycle',
+  nodes: [
+    { id: 'A', title: 'a', dependsOn: ['B'] },
+    { id: 'B', title: 'b', dependsOn: ['A'] }
+  ]
+}, 40).ok === false)
+const closure = dependencyClosure(normalized.graph, 'N3')
+ok('dependency closure is transitive', closure.has('N2') && closure.has('N1') && closure.size === 2)
+equal('dependents point the other way', dependentsOf(normalized.graph, 'N1').join(','), 'N2')
 
 // ---------------------------------------------------------------------------
 console.log('state machine')
@@ -132,7 +142,21 @@ state.rememberCall({ agent: fakeAgent, callId: 'call-exec', name: 'pwsh', argume
 const startedAt = Date.now()
 const uncovered = await state.decideApproval({ agent: fakeAgent, toolName: 'pwsh', callId: 'call-exec' }, never)
 ok(`uncovered call -> rejected after timeout (${Date.now() - startedAt}ms)`, uncovered === 'rejected' && Date.now() - startedAt >= 900)
-ok('timeout explains itself to the model', injected.some((entry) => entry.kind === 'inject' && entry.message.content[0].text.includes('没有覆盖这次调用')))
+
+// the blocked node is released, not killed: its approval survives
+const afterTimeout = state.panelView(fakeAgent.id)
+equal('timeout suspends the blocked node', afterTimeout.nodes.find((node) => node.id === 'N2').status, 'suspended')
+equal('timeout frees the running slot', afterTimeout.running, null)
+ok('suspension reason reaches the panel', afterTimeout.nodes.find((node) => node.id === 'N2').suspendReason.includes('审批超时'))
+const suspendNotice = injected
+  .filter((entry) => entry.kind === 'inject')
+  .map((entry) => entry.message.content[0].text)
+  .filter((text) => text.includes('已自动挂起'))
+  .pop()
+ok('timeout explains the suspension to the model', suspendNotice !== undefined && suspendNotice.includes('不要重试'))
+ok('timeout names the dependents that must wait', suspendNotice.includes('N3 依赖 N2'))
+ok('suspension marker is replayable', suspendNotice.includes('[[preflight:suspend:1:N2]]'))
+ok('suspended node resumes without re-approval', state.startNode(fakeAgent, 'N2').ok === true)
 
 // audit records what ran inside the window
 state.auditCall({ agent: fakeAgent, callId: 'call-net', name: 'web_fetch', arguments: { url: 'https://registry.npmjs.org/better-sqlite3' } })
@@ -164,6 +188,51 @@ const beforeAppend = state.panelView(fakeAgent.id).nodes.find((node) => node.id 
 const appendedState = state.appendGraph(fakeAgent, [{ id: 'N9', title: '追加步骤', effect: 'write', target: 'x' }])
 ok('append adds a proposed node', appendedState.ok === true && state.panelView(fakeAgent.id).nodes.find((node) => node.id === 'N9').status === 'proposed')
 equal('append keeps existing node status', state.panelView(fakeAgent.id).nodes.find((node) => node.id === 'N2').status, beforeAppend)
+
+// ---------------------------------------------------------------------------
+console.log('independent-branch switch')
+
+// A fast timeout state: the switch decision is the same code, only the clock is shorter.
+const switchInjected = []
+const switchAgent = {
+  id: 'session-switch',
+  session: { snapshotEvents: () => [] },
+  inject: (message) => switchInjected.push(message),
+  followup: (message) => switchInjected.push(message)
+}
+const switchState = createState({
+  logger: () => ({ info() {}, warn() {} }),
+  agents: { get: (id) => (id === switchAgent.id ? switchAgent : undefined) },
+  approval: { overrideOf: () => 'ask' }
+}, { approvalTimeoutSeconds: 0.05, nodeIdleSeconds: 60, maxNodes: 40, wakeOnGrant: true })
+
+ok('switch graph registered', switchState.setGraph(switchAgent, {
+  goal: '切换测试',
+  nodes: [
+    { id: 'A', title: '主线：写配置', effect: 'write', target: 'config.json' },
+    { id: 'B', title: '独立：更新文档', effect: 'write', target: 'README.md' },
+    { id: 'C', title: '发布', effect: 'execute', dependsOn: ['A'] }
+  ]
+}).ok === true)
+switchState.approveNodes(switchAgent.id, ['A', 'B'])
+ok('main node starts', switchState.startNode(switchAgent, 'A').ok === true)
+switchState.rememberCall({ agent: switchAgent, callId: 'sw1', name: 'pwsh', arguments: { command: 'git push' } })
+const switchStarted = Date.now()
+const switchOutcome = await switchState.decideApproval({ agent: switchAgent, toolName: 'pwsh', callId: 'sw1' }, never)
+ok(`uncovered call fails fast (${Date.now() - switchStarted}ms)`, switchOutcome === 'rejected' && Date.now() - switchStarted < 500)
+
+const switchView = switchState.panelView(switchAgent.id)
+equal('blocked node suspended', switchView.nodes.find((node) => node.id === 'A').status, 'suspended')
+equal('independent approved node is switchable', switchView.switchable.join(','), 'B')
+ok('dependent node reports the suspended prerequisite', switchView.nodes.find((node) => node.id === 'C').blockedBy.includes('已挂起'))
+const switchNotice = switchInjected.map((message) => message.content[0].text).join('\n')
+ok('switch notice names B as the next step', switchNotice.includes('preflight_node_start B'))
+ok('switch notice keeps A resumable', switchNotice.includes('preflight_node_start A'))
+ok('switch notice never offers the dependent node', switchNotice.includes('C 依赖 A'))
+ok('independent node starts while A is suspended', switchState.startNode(switchAgent, 'B').ok === true)
+ok('independent node ends', switchState.endNode(switchAgent, 'B', true).ok === true)
+ok('suspended node resumes after the independent branch', switchState.startNode(switchAgent, 'A').ok === true)
+equal('resume keeps the one-shot approval', switchState.panelView(switchAgent.id).nodes.find((node) => node.id === 'A').resumeCount, 1)
 
 // ---------------------------------------------------------------------------
 console.log('log replay')
@@ -205,11 +274,39 @@ const stale = replayAgent(staleEvents)
 const staleState = createState({ ...fakeCtx, agents: { get: (id) => (id === stale.id ? stale : undefined) } }, config)
 equal('approval from an older graph version is ignored', staleState.panelView(stale.id).nodes.find((node) => node.id === 'N2').status, 'proposed')
 
+// a suspension is durable: the injected marker replays the released slot, and a
+// later node_start replays the resume
+const suspendEvents = [
+  { type: 'tool/call', time: 1, data: { name: 'preflight_graph', callId: 'r0', arguments: graphArgs } },
+  { type: 'user/message', time: 2, data: { role: 'user', content: [{ type: 'text', text: '[[preflight:approve:1:N2]] ok' }] } },
+  { type: 'tool/call', time: 3, data: { name: 'preflight_node_start', callId: 'r1', arguments: JSON.stringify({ id: 'N2' }) } },
+  { type: 'agent/inbox/spliced', time: 4, data: { inserted: [{ role: 'user', content: [{ type: 'text', text: '⏸ 已自动挂起 [[preflight:suspend:1:N2]]' }] }] } }
+]
+const frozen = replayAgent(suspendEvents)
+const frozenState = createState({ ...fakeCtx, agents: { get: (id) => (id === frozen.id ? frozen : undefined) } }, config)
+const frozenView = frozenState.panelView(frozen.id)
+equal('suspension replays as a released slot', frozenView.nodes.find((node) => node.id === 'N2').status, 'suspended')
+equal('replayed suspension leaves nothing running', frozenView.running, null)
+
+const resumedEvents = [
+  ...suspendEvents,
+  { type: 'tool/call', time: 5, data: { name: 'preflight_node_start', callId: 'r2', arguments: JSON.stringify({ id: 'N2' }) } }
+]
+const resumed = replayAgent(resumedEvents)
+const resumedState = createState({ ...fakeCtx, agents: { get: (id) => (id === resumed.id ? resumed : undefined) } }, config)
+equal('resume replays as running', resumedState.panelView(resumed.id).nodes.find((node) => node.id === 'N2').status, 'running')
+
 const readiness = readinessOf(normalized.graph.nodes[2], new Map([
   ['N1', { status: 'done' }],
   ['N2', { status: 'done' }],
   ['N3', { status: 'proposed' }]
 ]))
 ok('readiness waits for approval', readiness.ready === false && readiness.blockedBy === '待批准')
+
+// Node-idle timers belong to the process; dispose every state so the suite exits now
+// instead of waiting out the 30–60s idle windows left open by the last transitions.
+for (const instance of [state, switchState, replayState, staleState, frozenState, resumedState]) {
+  instance.disposeAll()
+}
 
 console.log(`\n${checks} checks passed`)

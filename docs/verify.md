@@ -13,8 +13,8 @@ Client 半（面板）会走 HMR / 刷新，所以「面板是新的、Host 还�
 
 ```text
 ~/.dsh/logs/approval-preflight.log
-2026-10-29T…Z apply: start (v2.0.1)
-2026-10-29T…Z apply: wired (v2.0.1, channel=/dsh-approval-preflight)
+2026-10-29T…Z apply: start (v2.1.0)
+2026-10-29T…Z apply: wired (v2.1.0, channel=/dsh-approval-preflight)
 2026-10-29T…Z channel: prefix route installed on /dsh-approval-preflight
 2026-10-29T…Z apply: channel scope ready (/dsh-approval-preflight)
 ```
@@ -32,7 +32,7 @@ profile 里装的是 `link:` 依赖，指向本仓库目录，**不需要重新�
 
 ```bash
 npm run verify:loaded
-# ✓ 正在跑的就是 v2.0.1，面板路由已在 … 装好。
+# ✓ 正在跑的就是 v2.1.0，面板路由已在 … 装好。
 # ✗ 日志里的激活行没有版本号：这是 2.0.1 之前的构建，Host 还没重启。
 ```
 
@@ -40,9 +40,9 @@ npm run verify:loaded
 
 | 位置 | 期望 |
 | --- | --- |
-| Host 日志 | 最后几行是 `apply: start (v2.0.1)` → `apply: wired (v2.0.1, channel=…)` → `channel: prefix route installed` |
-| 面板底部右下角 | 灰色小字 `v2.0.1`（来自 `status` 端点的 `plugin.version`） |
-| 模型工具 `preflight_status` | 输出末尾：`插件已加载：dsh-approval-preflight v2.0.1` |
+| Host 日志 | 最后几行是 `apply: start (v2.1.0)` → `apply: wired (v2.1.0, channel=…)` → `channel: prefix route installed` |
+| 面板底部右下角 | 灰色小字 `v2.1.0`（来自 `status` 端点的 `plugin.version`） |
+| 模型工具 `preflight_status` | 输出末尾：`插件已加载：dsh-approval-preflight v2.1.0` |
 
 三者任一缺失，就说明对应一半没更新：日志缺失 = Host 没重启；面板没版本 = 浏览器缓存旧 bundle（Ctrl+R 硬刷新）；
 工具不存在 = Host 仍是 v1 或插件未启用。
@@ -65,6 +65,28 @@ npm run verify:loaded
 可以再做一个反例：让模型在 `N2` 里跑一条 `pwsh` 命令。`N2` 没有申报 `exec`，
 所以这条命令仍会弹原生卡（插件不接管），这就是「未申报操作走原生卡」的边界。
 
+## 3b. 自动切换场景（约 2 分钟）
+
+目的：验证「审批长时间没人点 → 自动挂起当前节点 → 切到不依赖它的独立分支」。
+
+前置：把 `approvalTimeoutSeconds` 临时调小（面板配置或 `cordis.patch.yml`，默认 90 秒；测试用 15 秒就够），重启生效。
+
+对模型说：
+
+> 计算图测试：先建一个配置文件写入（主线 N1），再写一段说明文档（独立分支 N2），最后发布（N3，依赖 N1）。
+> 在 N1 里尝试用需要审批的命令推送一次。
+
+期望：
+
+1. `preflight_graph` 登记三个节点，`N3.dependsOn = ["N1"]`；`N1`、`N2` 提交后由你批准。
+2. 模型 `preflight_node_start{id:"N1"}`，然后那个需要审批的调用弹原生卡；**不要去点**。
+3. 等过 `approvalTimeoutSeconds`：该调用快速失败；小条显示 `1 项已挂起`；面板里 `N1` 变「已挂起」并写明原因，`N3` 显示「等前置 N1（已挂起）」，`N2` 仍是「已批准」。
+4. 模型下一条消息应当直接 `preflight_node_start{id:"N2"}`——它没有重试刚才那个调用。
+5. `N2` 做完后，模型可以 `preflight_node_start{id:"N1"}` 继续（批准还在，不会再要你批准）。
+6. 面板底部的「不依赖它的可做节点：N2」和图上分层（`N1`/`N2` 同一列，`N3` 在下一列）应当对得上。
+
+反例：如果所有剩余节点都依赖 `N1`，通知会明确说「没有可切换的独立分支」，模型不应乱试。
+
 ## 4. 排错顺序
 
 | 现象 | 先查 |
@@ -83,9 +105,9 @@ npm run verify:loaded
 
 ```bash
 npm test                          # 全部
-node scripts/selftest.mjs        # 53 项：语义/图/状态机/审批拦截/回放/版本一致性
-node scripts/contract-test.mjs   # 39 项：真实 index.js 在假 Cordis 上下文里的装配与通道往返
-node scripts/client-test.mjs     # 30 项：真实 client.js 在假浏览器里的渲染与交互
+node scripts/selftest.mjs        # 78 项：语义/图/依赖/状态机/挂起切换/回放/版本一致性
+node scripts/contract-test.mjs   # 53 项：真实 index.js 在假 Cordis 上下文里的装配、输出 schema 与通道往返
+node scripts/client-test.mjs     # 39 项：真实 client.js 在假浏览器里的渲染与交互（含分层图、挂起态）
 ```
 
-改完代码先跑这三套，再重启做一次第 2、3 节的确认。
+改完代码先跑这三套，再重启做一次第 2、3、3b 节的确认。

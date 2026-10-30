@@ -250,6 +250,36 @@ openButton.props.onClick()
 ok('strip reopens the panel', panel.component({}) !== null)
 
 // ---------------------------------------------------------------------------
+// Suspended node, dependency tags and the layered graph
+// ---------------------------------------------------------------------------
+
+basePayload.nodes[1].status = 'suspended'
+basePayload.nodes[1].suspendReason = '等待「pwsh」审批超时（90 秒）'
+basePayload.nodes[1].dependsOn = ['N1']
+basePayload.nodes[1].dependents = ['N3']
+basePayload.nodes[2].dependsOn = ['N2']
+basePayload.counts = { ...basePayload.counts, proposed: 0, approved: 1, suspended: 1, done: 0, running: 0 }
+basePayload.suspended = ['N2']
+basePayload.switchable = ['N9']
+
+strip.component({ sessionId: 'session-client' })
+await new Promise((resolve) => setTimeout(resolve, 10))
+const stripSuspended = strip.component({ sessionId: 'session-client' })
+ok('strip reports a suspended node', texts(stripSuspended).includes('已挂起'))
+
+const suspendedPanel = panel.component({})
+const suspendedText = texts(suspendedPanel)
+ok('panel renders the suspended state', suspendedText.includes('已挂起'))
+ok('panel shows why the node is suspended', suspendedText.includes('等待「pwsh」审批超时'))
+ok('panel lists the independent branch', suspendedText.includes('不依赖它的可做节点：N9'))
+ok('panel marks downstream dependents', suspendedText.includes('后续 N3'))
+ok('panel shows a suspended count', suspendedText.includes('1 已挂起'))
+const suspendedDot = findDotByText(suspendedPanel, 'N2')
+ok('dot carries the suspended status', suspendedDot !== null && suspendedDot.props['data-status'] === 'suspended')
+ok('graph is laid out in dependency layers', findByClass(suspendedPanel, 'dshap-levels') !== null)
+ok('dependency layers are connected by arrows', suspendedText.includes('→'))
+
+// ---------------------------------------------------------------------------
 // Helpers used above
 // ---------------------------------------------------------------------------
 

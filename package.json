@@ -1,6 +1,6 @@
 {
   "name": "dsh-approval-preflight",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Graph-first permission preflight for DeepSeek Harness: the model declares a computation graph whose nodes carry the semantic operation (download what to where, write what, delete what); the user approves nodes one by one in a side panel, one approval covers one successful execution, uncovered operations still use the native approval card, and every node keeps an audit trail of what actually ran. / 先交计算图、逐节点批准的审批预检：节点写清这件事的本质，用户按节点一次性批准，执行成功即消耗、失败可重试；未申报的操作仍走原生卡，节点内实际跑过什么留有审计痕迹。",
   "type": "module",
   "main": "./index.js",
