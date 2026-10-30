@@ -227,6 +227,7 @@ const switchView = switchState.panelView(switchAgent.id)
 equal('blocked node suspended', switchView.nodes.find((node) => node.id === 'A').status, 'suspended')
 equal('independent approved node is switchable', switchView.switchable.join(','), 'B')
 ok('dependent node reports the suspended prerequisite', switchView.nodes.find((node) => node.id === 'C').blockedBy.includes('已挂起'))
+equal('suspend reason reads cleanly', switchView.nodes.find((node) => node.id === 'A').suspendReason, '等待「pwsh」审批超时 1 秒')
 const switchNotice = switchInjected.map((message) => message.content[0].text).join('\n')
 ok('switch notice names B as the next step', switchNotice.includes('preflight_node_start B'))
 ok('switch notice keeps A resumable', switchNotice.includes('preflight_node_start A'))
@@ -235,6 +236,29 @@ ok('independent node starts while A is suspended', switchState.startNode(switchA
 ok('independent node ends', switchState.endNode(switchAgent, 'B', true).ok === true)
 ok('suspended node resumes after the independent branch', switchState.startNode(switchAgent, 'A').ok === true)
 equal('resume keeps the one-shot approval', switchState.panelView(switchAgent.id).nodes.find((node) => node.id === 'A').resumeCount, 1)
+
+// With nothing but a suspended node left, the model-facing hint must say "resume",
+// not "nothing to do" (found in the live run of 2.1.0).
+const loneInjected = []
+const loneAgent = {
+  id: 'session-lone',
+  session: { snapshotEvents: () => [] },
+  inject: (message) => loneInjected.push(message),
+  followup: (message) => loneInjected.push(message)
+}
+const loneState = createState({
+  logger: () => ({ info() {}, warn() {} }),
+  agents: { get: (id) => (id === loneAgent.id ? loneAgent : undefined) },
+  approval: { overrideOf: () => 'ask' }
+}, { approvalTimeoutSeconds: 0.05, nodeIdleSeconds: 60, maxNodes: 40, wakeOnGrant: true })
+loneState.setGraph(loneAgent, { goal: '只有一条主线', nodes: [{ id: 'X', title: '唯一节点', effect: 'write', target: 'x.txt' }] })
+loneState.approveNodes(loneAgent.id, ['X'])
+loneState.startNode(loneAgent, 'X')
+loneState.rememberCall({ agent: loneAgent, callId: 'lone1', name: 'pwsh', arguments: { command: 'git push' } })
+await loneState.decideApproval({ agent: loneAgent, toolName: 'pwsh', callId: 'lone1' }, never)
+const loneView = loneState.modelView(loneAgent)
+ok('suspended-only hint points at resume', loneView.instruction.includes('preflight_node_start X'))
+ok('suspended-only graph lists the node as resumable', loneView.resumable.join(',') === 'X')
 
 // ---------------------------------------------------------------------------
 console.log('log replay')
@@ -307,7 +331,7 @@ ok('readiness waits for approval', readiness.ready === false && readiness.blocke
 
 // Node-idle timers belong to the process; dispose every state so the suite exits now
 // instead of waiting out the 30–60s idle windows left open by the last transitions.
-for (const instance of [state, switchState, replayState, staleState, frozenState, resumedState]) {
+for (const instance of [state, switchState, loneState, replayState, staleState, frozenState, resumedState]) {
   instance.disposeAll()
 }
 

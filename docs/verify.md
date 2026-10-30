@@ -105,9 +105,38 @@ npm run verify:loaded
 
 ```bash
 npm test                          # 全部
-node scripts/selftest.mjs        # 79 项：语义/图/依赖/状态机/挂起切换/回放/版本一致性
+node scripts/selftest.mjs        # 82 项：语义/图/依赖/状态机/挂起切换/回放/版本一致性
 node scripts/contract-test.mjs   # 53 项：真实 index.js 在假 Cordis 上下文里的装配、输出 schema 与通道往返
 node scripts/client-test.mjs     # 39 项：真实 client.js 在假浏览器里的渲染与交互（含分层图、挂起态）
 ```
 
 改完代码先跑这三套，再重启做一次第 2、3、3b 节的确认。
+
+## 6. 真机验证记录
+
+### 2026-10-30 · v2.1.0（首次完整真机）
+
+计算图：`G1 写工作区外文件（write + 提权）`、`G2 读 README（read，自动批准）`、`G3 删除（delete）`、`G4 用命令删除（execute/exec）`。
+
+| 验证项 | 结果 |
+| --- | --- |
+| 加载版本 | 日志 `apply: start (v2.1.0)`；`preflight_status` 末尾 `插件已加载：… v2.1.0`；面板底部 `v2.1.0` |
+| 面板分层 | G1/G2 同层，G3/G4 下一层（`dependsOn: ["G1"]`），下游显示「等前置 G1（已挂起）」 |
+| 未申报审批超时 | 运行 G1 时发起 `pwsh` 提权（`exec`，未申报）→ 90 秒无人回答 → 调用快速失败，G1 转「已挂起」，槽位释放，通知点名可切 G2 |
+| 独立分支切换 | 按通知 `preflight_node_start G2` 成功执行；G1 保持挂起 |
+| 续跑 | `preflight_node_start G1` 直接恢复，未再次询问批准；随后 `danger-full-access` 写入**没有弹卡**，文件内容核对一致 |
+| exec 覆盖 | G4 执行中 `pwsh` 删除工作区外文件（`danger-full-access`）**没有弹卡**，文件已删除 |
+| 审计 | G2 卡片出现「查看实际执行 (1)」 |
+
+截图：[整体状态](prototype/panel-live-2.1.0-states.png) · [分层图与待批准卡](prototype/panel-live-2.1.0.png) · [超时后残留的原生卡](prototype/panel-live-2.1.0-stale-card.png)
+
+本次发现、已在 2.1.1 修掉的问题：
+
+- 只剩挂起节点时，`preflight_status` 的提示是「当前没有可执行的节点」，而不是「用 preflight_node_start 续跑」。
+- 挂起原因括号嵌套（`已挂起（等待「pwsh」审批超时（90 秒））`）。
+
+已知、未修（写入 CHANGELOG 已知问题）：
+
+- 超时让路后原生审批卡会留在界面上（请求已经结束）；点它的任意按钮只是把卡关掉，不会真的放行。
+- 面板是固定覆盖层，助手头像装饰可能遮住卡片右侧一小块。
+- `effect: delete` 在本机没有对应工具，真正删除要走 `pwsh`（`exec`）；节点要按**实际会跑的工具**写 `impacts`。

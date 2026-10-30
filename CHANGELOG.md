@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.1.1] - 2026-10-30
+
+Live verification of 2.1.0 on the real Host, plus the two issues it exposed.
+
+### Fixed
+
+- When the only remaining work was a suspended node, `preflight_status` said "当前没有
+  可执行的节点" instead of pointing at `preflight_node_start <id>` to resume it. The
+  model-facing hint now has an explicit resume branch.
+- Suspension reasons no longer nest parentheses: `等待「pwsh」审批超时 90 秒` instead of
+  `等待「pwsh」审批超时（90 秒）`.
+
+### Changed
+
+- Prompt section: `effect` is only a classification hint; `impacts` decide what the
+  running node covers and must match the tools actually used. Deleting a file through
+  `pwsh` is `exec`, not the `fs-delete` default of `effect: delete` — learned from the
+  live run, where a `delete` node could not cover its own command.
+- `docs/verify.md` records the 2026-10-30 live verification (what was checked, the
+  screenshots, and the two rough edges below).
+
+### Known issues (documented, not fixed here)
+
+- After a timeout hand-off the native approval card can linger although the request has
+  already settled; clicking any of its buttons only dismisses it. The plugin cannot
+  withdraw the presenter's pending UI.
+- The side panel is a fixed overlay and can be partially covered by a persona avatar in
+  the Web UI.
+
 ## [2.1.0] - 2026-10-30
 
 ### Added
