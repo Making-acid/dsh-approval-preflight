@@ -105,7 +105,7 @@ npm run verify:loaded
 
 ```bash
 npm test                          # 全部
-node scripts/selftest.mjs        # 78 项：语义/图/依赖/状态机/挂起切换/回放/版本一致性
+node scripts/selftest.mjs        # 79 项：语义/图/依赖/状态机/挂起切换/回放/版本一致性
 node scripts/contract-test.mjs   # 53 项：真实 index.js 在假 Cordis 上下文里的装配、输出 schema 与通道往返
 node scripts/client-test.mjs     # 39 项：真实 client.js 在假浏览器里的渲染与交互（含分层图、挂起态）
 ```

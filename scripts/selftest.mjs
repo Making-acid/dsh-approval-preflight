@@ -156,6 +156,8 @@ const suspendNotice = injected
 ok('timeout explains the suspension to the model', suspendNotice !== undefined && suspendNotice.includes('不要重试'))
 ok('timeout names the dependents that must wait', suspendNotice.includes('N3 依赖 N2'))
 ok('suspension marker is replayable', suspendNotice.includes('[[preflight:suspend:1:N2]]'))
+const endWhileSuspended = state.endNode(fakeAgent, 'N2', true)
+ok('ending a suspended node explains resume instead', endWhileSuspended.ok === false && endWhileSuspended.reason.includes('preflight_node_start'))
 ok('suspended node resumes without re-approval', state.startNode(fakeAgent, 'N2').ok === true)
 
 // audit records what ran inside the window

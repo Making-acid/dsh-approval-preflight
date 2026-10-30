@@ -76,7 +76,7 @@ v2 的语义：
 
 ```bash
 npm test    # 或分别运行下面三个
-node scripts/selftest.mjs        # 78 项：语义/图/依赖/状态机/挂起切换/回放/版本一致性
+node scripts/selftest.mjs        # 79 项：语义/图/依赖/状态机/挂起切换/回放/版本一致性
 node scripts/contract-test.mjs   # 53 项：真实 index.js 的装配、输出 schema 校验与通道往返
 node scripts/client-test.mjs     # 39 项：真实 client.js 在假浏览器里的渲染与交互（含分层图、挂起态）
 ```
