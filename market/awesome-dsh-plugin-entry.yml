@@ -2,12 +2,13 @@
 # Target path in that repository:
 #   data/plugins/Making-acid__dsh-approval-preflight.yml
 #
-# Ready to submit once the repository is 24 hours old (list CI requirement).
-# `category: workflow` is in the list's published category set.
+# `category: workflow` is in the list's published category set. The icon is a
+# GitHub-hosted raster PNG (SVG would be refused). Screenshots live in this
+# repository's screenshots.json.
 url: https://github.com/Making-acid/dsh-approval-preflight
 name: Making-acid/dsh-approval-preflight
 category: workflow
 description:
-  en: Replaces per-call approval prompts with a reviewed computation graph. Each node states the semantic operation (download what to where, write what, delete what); the user approves nodes one at a time in a side panel, one approval covers one successful execution, uncovered operations still use the native approval card, and each node keeps an audit trail of what actually ran.
-  zh: 把逐次审批换成「先交计算图、用户逐节点批准」：节点写的是这件事的本质（下载什么到哪里、写什么、删什么），批准对一次成功执行生效；未申报的操作仍走原生审批卡，节点内实际跑过什么留有审计痕迹。
+  en: Graph-first permission preflight for DSH. The model declares a computation graph whose nodes state the semantic operation (download what to where, write what, delete what); the user approves nodes one at a time in a side panel, one approval covers one successful execution, and each node keeps an audit trail of what actually ran. Uncovered operations still ask through the native approval card, and a node blocked by an unanswered permission is suspended so work that does not depend on it can continue.
+  zh: 先交计算图、逐节点批准的权限预检：节点写清这件事的本质（下载什么到哪里、写什么、删什么），用户按节点批准，一次批准只对一次成功执行生效；未申报的操作仍走原生审批卡；节点被未答复的审批卡住时会自动挂起，先做不依赖它的工作；节点内实际跑过什么留有审计痕迹。
 icon: https://raw.githubusercontent.com/Making-acid/dsh-approval-preflight/main/assets/icon-180.png
