@@ -4,6 +4,45 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.1.2] - 2026-11-09
+
+Compatibility pass for the DSH 0.2.1 / 0.2.2 line (upstream latest: `0.2.2-rc.1`).
+
+### Fixed
+
+- **`package.json` declared no `engines` at all.** DSH 0.2.1 started preferring
+  `engines.dsh` when deciding whether a third-party plugin is compatible; without it the
+  plugin falls back to legacy heuristics. It now declares
+  `"dsh": ">=0.2.0-rc.2 <0.3.0-0"` and `"node": ">=20"`.
+
+### Added
+
+- `scripts/check-dsh.mjs` (`npm run test:dsh`): validates the five tool definitions against
+  the **installed Host's own** `@deepseek-ai/dsh-tools` schema contract and checks that
+  `engines.dsh` covers the running DSH version. Read-only, no install, skips cleanly when no
+  DSH installation is present.
+
+### Verified against DSH 0.2.2-rc.1
+
+No API change was needed; every surface this plugin touches keeps its contract:
+
+- `tools.register(definition, options)` — `output: { schema, render }` plus a disposer —
+  unchanged; all five tool definitions pass the 0.2.2 schema-subset validator.
+- `approval/request` is still a waterfall returning `ApprovalOutcome`
+  (`allowed-once` / `rejected` / `cancelled` / `unavailable`); `request.agent`,
+  `request.toolName`, `request.callId` and `request.signal` remain.
+- `tools/pre-execute`, `tools/result` and `agent/disposed` (`{ agent }`) still match;
+  `approval.overrideOf(session)` still returns the policy override, and
+  `agents.get(sessionId)` still resolves a live Agent.
+- The Host-side panel channel still works: `webServer.register({ kind: 'prefix', path,
+  handler })` and `connection.admit(request)` → `{ peer } | { rejection }` are unchanged, and the
+  Client half still gets `connection.rpc.call(channel, endpoint, payload)` over
+  `window.__ModuleLoader__.load({ id, factory })`.
+- Client slot names `conversation.input.dock` and `shell.overlay` still exist, and
+  `slots.inject(name, () => slots.register({ name, id, order }, Component))` is still the
+  supported registration shape under Cordis 4.1.0.
+- `cordis.patch.yml` rows (`insert`, `config`) are still the supported Loader 1.1.0 patch format.
+
 ## [2.1.1] - 2026-10-30
 
 Live verification of 2.1.0 on the real Host, plus the two issues it exposed.

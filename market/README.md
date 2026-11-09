@@ -15,7 +15,22 @@ The content to use is prepared in [`awesome-dsh-plugin-entry.yml`](awesome-dsh-p
 | When | What |
 |---|---|
 | 2026-10-30 | Submitted [PR #10567](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/10567) — one entry file, no other entries touched. |
-| 2026-10-30 | `check` (PR check) and `Submission gate` both **success**; gate verdict `Entries look good`; PR open, mergeable, no `held:` label. Waiting for maintainer review. |
+| 2026-10-30 | `check` (PR check) and `Submission gate` both **success**; gate verdict `Entries look good`. |
+| 2026-10-30 | **Merged** at `2026-10-30T17:04:42Z` (merge commit `0ab7948`); entry is live at `data/plugins/Making-acid__dsh-approval-preflight.yml`. |
+| 2026-11-09 | Released [`v2.1.2`](https://github.com/Making-acid/dsh-approval-preflight/releases/tag/v2.1.2) with the version-independent tarball `dsh-approval-preflight.tgz` (DSH 0.2.1/0.2.2 compatibility). The existing entry needs no new PR — it carries no version, and the market reads the repository. |
+
+## Version updates after listing
+
+Entries contain no version field. A plugin update is therefore: bump `package.json` in this
+repository, push `main`, and publish a GitHub Release whose asset name stays
+**version-independent** (`dsh-approval-preflight.tgz`). Markets and the awesome-dsh-plugin index
+pick the new version up from the repository on their next build — no new PR per release.
+
+Prefer the pinned-tag download URL if a release page is ever reworked:
+
+```yaml
+tarball: https://github.com/Making-acid/dsh-approval-preflight/releases/latest/download/dsh-approval-preflight.tgz
+```
 
 ## Checklist (from the list's contributing guide)
 
@@ -32,7 +47,7 @@ The content to use is prepared in [`awesome-dsh-plugin-entry.yml`](awesome-dsh-p
 | `category` is one of the list's values | ✅ `workflow` is in the published list |
 | Optional storefront icon (GitHub-hosted **raster**) | ✅ `assets/icon-180.png` (SVG would be refused) |
 | Optional screenshots via `screenshots.json` | ✅ `assets/screenshot-1.png` (v2 panel) + `assets/screenshot-2-live-switch.png` (live 2.1.0 run) |
-| Optional npm package (improves install) | ⏳ `npm publish` when ready; `repository` already points here |
+| Optional npm package (improves install) | ⏳ not published: the npm name `dsh-approval-preflight` is still free, but the repository has no `NPM_TOKEN` Actions secret, so the market installs from source / the GitHub Release tarball. |
 | Optional release tarball | not needed — the repo root is installable from source |
 
 ## Steps

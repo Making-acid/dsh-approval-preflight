@@ -79,7 +79,13 @@ npm test    # 或分别运行下面三个
 node scripts/selftest.mjs        # 82 项：语义/图/依赖/状态机/挂起切换/回放/版本一致性
 node scripts/contract-test.mjs   # 53 项：真实 index.js 的装配、输出 schema 校验与通道往返
 node scripts/client-test.mjs     # 39 项：真实 client.js 在假浏览器里的渲染与交互（含分层图、挂起态）
+
+npm run test:dsh                 # 用本机 DSH 宿主自己的工具契约校验五个工具定义 + engines.dsh
 ```
+
+`test:dsh` 只读取本机 DSH 安装里的 `@deepseek-ai/dsh-tools`，不安装、不修改任何东西；
+它执行的校验与 Host 在 `tools.register()` 时完全一致，所以 DSH 升级后可以先用它回答
+「插件还能不能加载」，不必真的重启宿主。
 
 离线测试覆盖模型侧工具、审批拦截、依赖切换、会话日志回放、面板渲染与通道往返。**真机（重启后）的确认清单**见
 [docs/verify.md](docs/verify.md)：版本号三处对齐、一次完整的「登记 → 批准 → 执行 → 消耗 → 审计」链路、「审批卡住 → 自动挂起 → 切独立分支」场景，以及排错顺序。
@@ -88,6 +94,17 @@ node scripts/client-test.mjs     # 39 项：真实 client.js 在假浏览器里�
 [docs/verify.md §6](docs/verify.md)。
 
 上线前先跑 `npm run verify:loaded`：它读 Host 日志并对照 `package.json`，一条命令回答「现在跑的是不是这个构建、面板路由装没装成」。
+
+## 兼容性
+
+- **DSH**：`engines.dsh` = `>=0.2.0-rc.2 <0.3.0-0`（DSH 0.2.1 起优先按该字段判断第三方插件兼容性）。
+  已在 `0.2.0-rc.2` 与 `0.2.2-rc.1` 的插件契约上逐项核对：工具注册契约、`approval/request` 瀑布、
+  `tools/pre-execute` / `tools/result` / `agent/disposed`、`webServer` 路由与 `connection.admit`、
+  Client 的 `connection.rpc.call` 与 `slots` 注册形状都不需要改代码。
+- **Node**：插件代码 `>=20`；注意 DSH 0.2.2 起宿主自身要求 Node `>=24.9`。
+- **依赖面**：只使用 Cordis 的 `tools` / `systemPrompt` / `agents` / `approval` / `connection` /
+  `webServer` 服务（浏览器侧为 `slots` / `connection`），不引入任何 `@deepseek-ai/*` 包，也就没有
+  peerDependencies 引起的 `ERESOLVE`。
 
 ## 已知限制
 
@@ -117,7 +134,7 @@ lib/prompt.js         系统提示词中的工作流规则（含挂起与切换�
 lib/config.js         配置归一化
 lib/version.js        版本常量（日志 / 面板 / 工具三处同源）
 lib/messages.js       消息构造，批准与挂起标记
-scripts/              三套离线测试 + verify:loaded 真机自检
+scripts/              三套离线测试 + verify:loaded 真机自检 + check-dsh 宿主契约检查
 docs/verify.md        重启后的真机验证清单与排错（含自动切换场景）
 docs/grant-model.md   授权模型设计稿（结构与取舍，含依赖切换语义）
 docs/prototype/       前端原型（HTML + 截图）
